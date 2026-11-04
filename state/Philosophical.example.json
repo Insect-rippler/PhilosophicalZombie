@@ -1,0 +1,59 @@
+{
+    "payload": {
+        "messages": [],
+        "model": "deepseek-flash",
+        "thinking": {
+            "type": "enabled"
+        },
+        "reasoning_effort": "high",
+        "max_tokens": 16384,
+        "response_format": {
+            "type": "json_object"
+        },
+        "stream ": false,
+        "api": "sk-你的key",
+        "stream_options": {
+            "include_usage": false
+        },
+        "temperature": 1.5,
+        "top_p": 1,
+        "tool_choice": "auto",
+        "logprobs": false,
+        "top_logprobs": 0,
+        "tools": [],
+        "user_id": "漾涟·孑"
+    },
+    "harness": {
+        "name": "涟·梦露",
+        "prompt_type_order": [
+            "persona",
+            "agent",
+            "character",
+            "memory_persistent",
+            "lorebook_persistent",
+            "user",
+            "skill_proficient",
+            "session",
+            "memory_momentary",
+            "lorebook_momentary",
+            "skill_knowledge",
+            "state",
+            "last_message",
+            "plan",
+            "只做参考，不涉及具体上下文顺序设置"
+        ],
+        "usage": {
+            "maxTurn": 100
+        },
+        "session": {
+            "compressionThreshold": 340000,
+            "retainedTrun": 8
+        },
+        "subprocess": {
+            "timeout": 300
+        },
+        "debug": {
+            "dumpTail": true
+        }
+    }
+}

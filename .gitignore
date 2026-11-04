@@ -1,0 +1,50 @@
+# ============ 凭据：绝不入库 ============
+state/Philosophical.json
+*.key
+*.pem
+.env
+
+# ============ 角色内容：只保留占位说明 ============
+# CHARACTER/PERSONA/MEMORY/LOREBOOK/USER 属于角色数据，不入库
+ConsciousnessRealm/*.md
+!ConsciousnessRealm/README.md
+ConsciousnessRealm/characters/
+ConsciousnessRealm/plan/
+# 记忆数据与向量（产物 / 派生）
+ConsciousnessRealm/embedding/
+# 世界书条目内容（格式见 ConsciousnessRealm/README.md）
+ConsciousnessRealm/lorebook/lorebook.json
+
+# ============ 模型权重：约 1.43 GB，走下载 ============
+model/f5/
+model/vocos/
+model/bge-small-zh-v1.5/
+
+# ============ 技术资料：不入库 ============
+engine/test.md
+engine/test.json
+engine/chat_completions.py
+vivarium/
+
+# ============ 处理产物 / 原料 ============
+state/media/
+state/session/
+state/tmp/
+state/usage/
+*.jsonl
+*.npz
+
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# ============ 编辑器 / 系统 ============
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

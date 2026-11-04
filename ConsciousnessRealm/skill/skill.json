@@ -1,0 +1,11 @@
+{
+    "skills": [
+        {
+            "title": "技能1",
+            "keywords": ["word1", "word2", "word3"],
+            "content": "技能1的详细描述和使用方法。",
+            "constant": false,
+            "timestamp": 1792395308
+        }
+    ]
+}

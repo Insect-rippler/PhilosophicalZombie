@@ -1,0 +1,26 @@
+{
+    "speak": {
+        "backend": "edge",
+        "outDir": "state/media/audio",
+        "maxChars": 600,
+        "edge": {
+            "voice": "zh-CN-XiaoxiaoNeural",
+            "rate": "+0%",
+            "pitch": "+0Hz",
+            "volume": "+0%"
+        },
+        "local": {
+            "method": "POST",
+            "url": "http://127.0.0.1:9880/tts",
+            "headers": {},
+            "body": {
+                "text": "{text}",
+                "ref_audio_path": "{root}/state/media/voice/char_4098_vvana/ref_cn032.wav",
+                "ref_text": "博士，暂时接受此刻灵感的枯竭，并记住这种感受。对这未完的诗篇，我将满怀期待。",
+                "nfe_step": 16
+            },
+            "ext": "wav"
+        }
+    }
+}
+
