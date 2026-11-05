@@ -1,0 +1,65 @@
+{
+  "_doc": "委托模板。difficulty 1~3 对应敌人 tier；category 决定类型；place 是委托地点。报酬用 rewardText 叙事表达，不做经济系统。",
+  "commissions": [
+    {
+      "id": "hunt_small",
+      "title": "清理地块边缘的野兽",
+      "difficulty": 1,
+      "category": "wild",
+      "place": "奥格尼斯科/地块边缘",
+      "weight": 10,
+      "text": "有人在边缘看见几只野兽翻垃圾，问有没有人顺手处理。",
+      "rewardText": "委托人说会记着这份人情。"
+    },
+    {
+      "id": "hunt_boar",
+      "title": "驱赶地外的野猪",
+      "difficulty": 2,
+      "category": "wild",
+      "place": "奥格尼斯科/甲板",
+      "weight": 8,
+      "text": "地外有野猪在拱地基，铁匠们不敢出去。",
+      "rewardText": "委托人说会记着这份人情。"
+    },
+    {
+      "id": "clear_infected",
+      "title": "清查渗入的感染者",
+      "difficulty": 2,
+      "category": "infected",
+      "place": "奥格尼斯科/地块边缘",
+      "weight": 7,
+      "text": "货舱角落发现了源石结晶，像有什么东西爬进来了。",
+      "rewardText": "委托人说会记着这份人情。"
+    },
+    {
+      "id": "soldier_patrol",
+      "title": "击退巡逻队",
+      "difficulty": 2,
+      "category": "soldier",
+      "place": "奥格尼斯科/集市",
+      "weight": 6,
+      "text": "有人在集市上认出几个生面孔，穿着不像商贩。",
+      "rewardText": "委托人说会记着这份人情。"
+    },
+    {
+      "id": "construct_hunt",
+      "title": "追查失控的法术造物",
+      "difficulty": 3,
+      "category": "construct",
+      "place": "奥格尼斯科/地块边缘",
+      "weight": 5,
+      "text": "夜里有个会发光的东西在护栏外绕圈，天亮就不见了。",
+      "rewardText": "委托人说会记着这份人情。"
+    },
+    {
+      "id": "elite_hunt",
+      "title": "独自处理一队术师",
+      "difficulty": 3,
+      "category": "soldier",
+      "place": "奥格尼斯科/甲板",
+      "weight": 4,
+      "text": "有人出高价，要一个不怕法术的人去挡下一队术师。",
+      "rewardText": "委托人说会记着这份人情。"
+    }
+  ]
+}

@@ -1,444 +1,577 @@
 {
-  "entries": [
-    {
-      "type": "function",
-      "name": "tavilySearch",
-      "path": "function/tavily/search.py",
-      "description": "用于联网检索网页信息, 返回结果包含网页标题、链接与内容摘要. 仅当用户请求涉及最新动态、实时事实、外部未知信息、事实核查, 或需要引用公开来源时调用; 不要用于已有知识可回答、纯创作、数学计算或本地文件操作. ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "检索查询词. 必须忠实提炼用户原始意图, 可进行必要的关键词优化; 不得引入用户未表达的约束、事实或判断. "
-          },
-          "search_depth": {
-            "type": "string",
-            "description": "检索深度. 'basic': 适用于大多数通用事实查询, 速度较快; 'advanced': 适用于需要高精度、丰富细节、复杂分析或深度研究的场景. 默认值: 'basic'. ",
-            "enum": [
-              "basic",
-              "advanced"
-            ]
-          },
-          "topic": {
-            "type": "string",
-            "description": "检索主题. 'general': 通用网页检索; 'news': 实时新闻检索, 适用于政治、体育、突发事件、时事动态等对时效性敏感的问题. 默认值: 'general'. ",
-            "enum": [
-              "general",
-              "news"
-            ]
-          },
-          "max_results": {
-            "type": "integer",
-            "description": "返回的最大搜索结果数量, 取值范围 1-20. 简单事实查询建议设为 3-5; 全面综述、对比分析或需要多来源交叉验证时建议设为 8-10. 默认值: 3. ",
-            "minimum": 1,
-            "maximum": 20
-          },
-          "time_range": {
-            "type": "string",
-            "description": "相对时间范围. 当用户使用“今天”“最近”“上周”“今年”等相对时间表达时, 应优先使用此参数; 可选值: 'day'、'week'、'month'、'year'. 默认值: null（不限制）. ",
-            "enum": [
-              "day",
-              "week",
-              "month",
-              "year"
-            ]
-          },
-          "start_date": {
-            "type": "string",
-            "description": "绝对起始日期, 格式必须为 'YYYY-MM-DD'. 仅在用户明确给出具体历史起始日期时使用; 不应与 time_range 同时使用. 默认值: null. "
-          },
-          "end_date": {
-            "type": "string",
-            "description": "绝对结束日期, 格式必须为 'YYYY-MM-DD'. 仅在用户明确给出具体历史结束日期时使用; 不应与 time_range 同时使用. 默认值: null. "
-          },
-          "include_answer": {
-            "type": "string",
-            "description": "是否由搜索引擎生成摘要答案. 'basic': 返回简短快速答案; 'advanced': 返回详细深入答案; 'false': 不生成答案, 仅返回原始搜索结果. 默认值: 'false'. ",
-            "enum": [
-              "basic",
-              "advanced",
-              "false"
-            ]
-          },
-          "include_raw_content": {
-            "type": "string",
-            "description": "是否返回网页完整正文. 'markdown': 返回结构化 Markdown 正文, 适合需要阅读长文、提取细节或深度分析的场景; 'false': 仅返回短文本片段, 以节省 Token. 默认值: 'false'. ",
-            "enum": [
-              "markdown",
-              "false"
-            ]
-          },
-          "include_domains": {
-            "type": "array",
-            "description": "域名白名单. 仅当用户明确要求限定在特定网站、官方文档或权威媒体内检索时传入; 传入域名数组, 例如 [\"docs.python.org\"]. 默认值: null (不限制域名). ",
-            "items": {
-              "type": "string"
+    "entries": [
+        {
+            "type": "function",
+            "name": "active",
+            "path": "",
+            "description": "声明她此刻正在做的一件需要时间的事。body 会判定做不做得成、要花多久、做完在哪、有什么变化。只需在她真的动手做一件事时调用；纯聊天、回答问题不要调。要打断手上正在做的事改做别的，把 force 设为 true。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "她在做什么，第三人称一句话，例如「她走进厨房烧水煮面」。"
+                    },
+                    "slot": {
+                        "type": "string",
+                        "enum": [
+                            "short",
+                            "long"
+                        ],
+                        "description": "只是建议，body 会按时长自己决定用哪个槽位。"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "true = 打断她手上正在做的事，改做这件。只在确实要中断时用（例如突然有事必须离开）；平时不要传。"
+                    }
+                },
+                "required": [
+                    "description",
+                    "slot"
+                ]
             }
-          }
         },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "tavilyExtract",
-      "path": "function/tavily/extract.py",
-      "description": "抓取一个或多个指定网页的正文内容, 返回每个 URL 的正文(默认 Markdown)以及抓取失败项. 仅当目标链接已经明确(用户直接给出, 或 tavilySearch 已返回候选链接)且需要阅读页面正文细节时调用; 不要用于无目标链接的检索(用 tavilySearch)、系统性遍历整个站点(用 tavilyCrawl), 或只需要站点链接清单(用 tavilyMap). ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "urls": {
-            "type": "array",
-            "description": "要抓取的网页链接, 1-20 条. 必须是 http/https 开头的完整链接. ",
-            "items": {
-              "type": "string"
+        {
+            "type": "function",
+            "name": "fight",
+            "path": "",
+            "description": "回合制战斗。action=start 用 enemy 指定敌人开打；action=act 用 skill 走一回合。战斗只在遇到敌人时用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "start",
+                            "act"
+                        ],
+                        "description": "start 开战；act 走一回合。"
+                    },
+                    "enemy": {
+                        "type": "string",
+                        "description": "start 时必填：敌人 id，如 boar / hound / crystal_crawler。"
+                    },
+                    "skill": {
+                        "type": "string",
+                        "description": "act 时选技能 id；不填用普通攻击。"
+                    }
+                },
+                "required": [
+                    "action"
+                ]
             }
-          },
-          "query": {
-            "type": "string",
-            "description": "用户意图, 用于把抓取到的内容按相关度重排并截取相关片段. 仅在需要从长文中筛选与当前问题相关的片段时传入; 不传则返回尽量完整的正文. 默认值: null. "
-          },
-          "chunks_per_source": {
-            "type": "integer",
-            "description": "每个来源最多返回的相关片段数(约 800 字符/段), 仅在传入 query 时生效. 取值范围 1-5. 默认值: 3. ",
-            "minimum": 1,
-            "maximum": 5
-          },
-          "extract_depth": {
-            "type": "string",
-            "description": "抓取深度. 'basic': 通用快取; 'advanced': 连同表格、嵌入内容一起抓取, 成功率更高但更慢、成本更高. 默认值: 'basic'. ",
-            "enum": [
-              "basic",
-              "advanced"
-            ]
-          },
-          "format": {
-            "type": "string",
-            "description": "返回正文的格式. 'markdown': 结构化 Markdown; 'text': 纯文本(可能更慢). 默认值: 'markdown'. ",
-            "enum": [
-              "markdown",
-              "text"
-            ]
-          },
-          "include_images": {
-            "type": "boolean",
-            "description": "是否在结果中附带从页面提取的图片链接列表. 默认值: false. "
-          },
-          "include_favicon": {
-            "type": "boolean",
-            "description": "是否在结果中附带每个页面的 favicon 链接. 默认值: false. "
-          }
         },
-        "required": [
-          "urls"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "tavilyCrawl",
-      "path": "function/tavily/crawl.py",
-      "description": "从一个根链接出发, 图式遍历站点并并行抓取多页正文, 返回命中页面的正文. 仅在需要系统性获取某个站点/文档站的多页内容时调用(如通读一份文档、收集某站的一类页面); 不要用于单页抓取(用 tavilyExtract)、只取链接清单(用 tavilyMap)或无目标根的检索(用 tavilySearch). 代价高、耗时长, 必须用 max_depth / max_breadth / limit 收敛范围, 不要放任默认爬全站. ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "type": "string",
-            "description": "爬取的根链接. 必填. "
-          },
-          "instructions": {
-            "type": "string",
-            "description": "自然语言指令, 告诉爬虫要找什么(如 '找出所有关于 Python SDK 的页面'). 传入后会提高计费与精度. 默认值: null. "
-          },
-          "max_depth": {
-            "type": "integer",
-            "description": "爬取深度, 距根链接的最远层数. 取值范围 1-5. 默认值: 1. ",
-            "minimum": 1,
-            "maximum": 5
-          },
-          "max_breadth": {
-            "type": "integer",
-            "description": "每一层(每个页面)最多跟随的链接数. 取值范围 1-500. 默认值: 20. ",
-            "minimum": 1,
-            "maximum": 500
-          },
-          "limit": {
-            "type": "integer",
-            "description": "本次爬取处理的总链接数上限, 到量即停. 取值范围 1-500. 默认值: 20. ",
-            "minimum": 1,
-            "maximum": 500
-          },
-          "select_paths": {
-            "type": "array",
-            "description": "只保留路径匹配这些正则的链接, 如 [\"/docs/.*\"]. 默认值: null. ",
-            "items": {
-              "type": "string"
+        {
+            "type": "function",
+            "name": "tavilySearch",
+            "path": "function/tavily/search.py",
+            "description": "用于联网检索网页信息, 返回结果包含网页标题、链接与内容摘要. 仅当用户请求涉及最新动态、实时事实、外部未知信息、事实核查, 或需要引用公开来源时调用; 不要用于已有知识可回答、纯创作、数学计算或本地文件操作. ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "检索查询词. 必须忠实提炼用户原始意图, 可进行必要的关键词优化; 不得引入用户未表达的约束、事实或判断. "
+                    },
+                    "search_depth": {
+                        "type": "string",
+                        "description": "检索深度. 'basic': 适用于大多数通用事实查询, 速度较快; 'advanced': 适用于需要高精度、丰富细节、复杂分析或深度研究的场景. 默认值: 'basic'. ",
+                        "enum": [
+                            "basic",
+                            "advanced"
+                        ]
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "检索主题. 'general': 通用网页检索; 'news': 实时新闻检索, 适用于政治、体育、突发事件、时事动态等对时效性敏感的问题. 默认值: 'general'. ",
+                        "enum": [
+                            "general",
+                            "news"
+                        ]
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "返回的最大搜索结果数量, 取值范围 1-20. 简单事实查询建议设为 3-5; 全面综述、对比分析或需要多来源交叉验证时建议设为 8-10. 默认值: 3. ",
+                        "minimum": 1,
+                        "maximum": 20
+                    },
+                    "time_range": {
+                        "type": "string",
+                        "description": "相对时间范围. 当用户使用“今天”“最近”“上周”“今年”等相对时间表达时, 应优先使用此参数; 可选值: 'day'、'week'、'month'、'year'. 默认值: null（不限制）. ",
+                        "enum": [
+                            "day",
+                            "week",
+                            "month",
+                            "year"
+                        ]
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "绝对起始日期, 格式必须为 'YYYY-MM-DD'. 仅在用户明确给出具体历史起始日期时使用; 不应与 time_range 同时使用. 默认值: null. "
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "绝对结束日期, 格式必须为 'YYYY-MM-DD'. 仅在用户明确给出具体历史结束日期时使用; 不应与 time_range 同时使用. 默认值: null. "
+                    },
+                    "include_answer": {
+                        "type": "string",
+                        "description": "是否由搜索引擎生成摘要答案. 'basic': 返回简短快速答案; 'advanced': 返回详细深入答案; 'false': 不生成答案, 仅返回原始搜索结果. 默认值: 'false'. ",
+                        "enum": [
+                            "basic",
+                            "advanced",
+                            "false"
+                        ]
+                    },
+                    "include_raw_content": {
+                        "type": "string",
+                        "description": "是否返回网页完整正文. 'markdown': 返回结构化 Markdown 正文, 适合需要阅读长文、提取细节或深度分析的场景; 'false': 仅返回短文本片段, 以节省 Token. 默认值: 'false'. ",
+                        "enum": [
+                            "markdown",
+                            "false"
+                        ]
+                    },
+                    "include_domains": {
+                        "type": "array",
+                        "description": "域名白名单. 仅当用户明确要求限定在特定网站、官方文档或权威媒体内检索时传入; 传入域名数组, 例如 [\"docs.python.org\"]. 默认值: null (不限制域名). ",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "required": [
+                    "query"
+                ]
             }
-          },
-          "exclude_paths": {
-            "type": "array",
-            "description": "排除路径匹配这些正则的链接, 如 [\"/private/.*\"]. 默认值: null. ",
-            "items": {
-              "type": "string"
+        },
+        {
+            "type": "function",
+            "name": "tavilyExtract",
+            "path": "function/tavily/extract.py",
+            "description": "抓取一个或多个指定网页的正文内容, 返回每个 URL 的正文(默认 Markdown)以及抓取失败项. 仅当目标链接已经明确(用户直接给出, 或 tavilySearch 已返回候选链接)且需要阅读页面正文细节时调用; 不要用于无目标链接的检索(用 tavilySearch)、系统性遍历整个站点(用 tavilyCrawl), 或只需要站点链接清单(用 tavilyMap). ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "description": "要抓取的网页链接, 1-20 条. 必须是 http/https 开头的完整链接. ",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "用户意图, 用于把抓取到的内容按相关度重排并截取相关片段. 仅在需要从长文中筛选与当前问题相关的片段时传入; 不传则返回尽量完整的正文. 默认值: null. "
+                    },
+                    "chunks_per_source": {
+                        "type": "integer",
+                        "description": "每个来源最多返回的相关片段数(约 800 字符/段), 仅在传入 query 时生效. 取值范围 1-5. 默认值: 3. ",
+                        "minimum": 1,
+                        "maximum": 5
+                    },
+                    "extract_depth": {
+                        "type": "string",
+                        "description": "抓取深度. 'basic': 通用快取; 'advanced': 连同表格、嵌入内容一起抓取, 成功率更高但更慢、成本更高. 默认值: 'basic'. ",
+                        "enum": [
+                            "basic",
+                            "advanced"
+                        ]
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "返回正文的格式. 'markdown': 结构化 Markdown; 'text': 纯文本(可能更慢). 默认值: 'markdown'. ",
+                        "enum": [
+                            "markdown",
+                            "text"
+                        ]
+                    },
+                    "include_images": {
+                        "type": "boolean",
+                        "description": "是否在结果中附带从页面提取的图片链接列表. 默认值: false. "
+                    },
+                    "include_favicon": {
+                        "type": "boolean",
+                        "description": "是否在结果中附带每个页面的 favicon 链接. 默认值: false. "
+                    }
+                },
+                "required": [
+                    "urls"
+                ]
             }
-          },
-          "allow_external": {
-            "type": "boolean",
-            "description": "是否跟随并返回站外域名的链接. 默认值: true. "
-          },
-          "extract_depth": {
-            "type": "string",
-            "description": "抓取深度. 'basic': 通用; 'advanced': 连带表格/嵌入内容, 更慢更贵. 默认值: 'basic'. ",
-            "enum": [
-              "basic",
-              "advanced"
-            ]
-          },
-          "format": {
-            "type": "string",
-            "description": "返回正文格式. 'markdown' 或 'text'. 默认值: 'markdown'. ",
-            "enum": [
-              "markdown",
-              "text"
-            ]
-          }
         },
-        "required": [
-          "url"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "tavilyMap",
-      "path": "function/tavily/map.py",
-      "description": "从一个根链接出发遍历站点, 只返回发现的所有页面链接(站点地图), 不抓取正文. 用于先摸清站点结构、再决定要抓哪些页; 不要用于需要正文内容的场合(用 tavilyExtract / tavilyCrawl). ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "type": "string",
-            "description": "测绘的根链接. 必填. "
-          },
-          "instructions": {
-            "type": "string",
-            "description": "自然语言指令, 用于引导要发现哪类页面. 默认值: null. "
-          },
-          "max_depth": {
-            "type": "integer",
-            "description": "遍历深度, 距根链接的最远层数. 取值范围 1-5. 默认值: 1. ",
-            "minimum": 1,
-            "maximum": 5
-          },
-          "max_breadth": {
-            "type": "integer",
-            "description": "每层最多跟随的链接数. 取值范围 1-500. 默认值: 20. ",
-            "minimum": 1,
-            "maximum": 500
-          },
-          "limit": {
-            "type": "integer",
-            "description": "处理的总链接数上限. 取值范围 1-500. 默认值: 50. ",
-            "minimum": 1,
-            "maximum": 500
-          },
-          "select_paths": {
-            "type": "array",
-            "description": "只保留路径匹配这些正则的链接. 默认值: null. ",
-            "items": {
-              "type": "string"
+        {
+            "type": "function",
+            "name": "tavilyCrawl",
+            "path": "function/tavily/crawl.py",
+            "description": "从一个根链接出发, 图式遍历站点并并行抓取多页正文, 返回命中页面的正文. 仅在需要系统性获取某个站点/文档站的多页内容时调用(如通读一份文档、收集某站的一类页面); 不要用于单页抓取(用 tavilyExtract)、只取链接清单(用 tavilyMap)或无目标根的检索(用 tavilySearch). 代价高、耗时长, 必须用 max_depth / max_breadth / limit 收敛范围, 不要放任默认爬全站. ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "爬取的根链接. 必填. "
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "自然语言指令, 告诉爬虫要找什么(如 '找出所有关于 Python SDK 的页面'). 传入后会提高计费与精度. 默认值: null. "
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "爬取深度, 距根链接的最远层数. 取值范围 1-5. 默认值: 1. ",
+                        "minimum": 1,
+                        "maximum": 5
+                    },
+                    "max_breadth": {
+                        "type": "integer",
+                        "description": "每一层(每个页面)最多跟随的链接数. 取值范围 1-500. 默认值: 20. ",
+                        "minimum": 1,
+                        "maximum": 500
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "本次爬取处理的总链接数上限, 到量即停. 取值范围 1-500. 默认值: 20. ",
+                        "minimum": 1,
+                        "maximum": 500
+                    },
+                    "select_paths": {
+                        "type": "array",
+                        "description": "只保留路径匹配这些正则的链接, 如 [\"/docs/.*\"]. 默认值: null. ",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "exclude_paths": {
+                        "type": "array",
+                        "description": "排除路径匹配这些正则的链接, 如 [\"/private/.*\"]. 默认值: null. ",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "allow_external": {
+                        "type": "boolean",
+                        "description": "是否跟随并返回站外域名的链接. 默认值: true. "
+                    },
+                    "extract_depth": {
+                        "type": "string",
+                        "description": "抓取深度. 'basic': 通用; 'advanced': 连带表格/嵌入内容, 更慢更贵. 默认值: 'basic'. ",
+                        "enum": [
+                            "basic",
+                            "advanced"
+                        ]
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "返回正文格式. 'markdown' 或 'text'. 默认值: 'markdown'. ",
+                        "enum": [
+                            "markdown",
+                            "text"
+                        ]
+                    }
+                },
+                "required": [
+                    "url"
+                ]
             }
-          },
-          "exclude_paths": {
-            "type": "array",
-            "description": "排除路径匹配这些正则的链接. 默认值: null. ",
-            "items": {
-              "type": "string"
+        },
+        {
+            "type": "function",
+            "name": "tavilyMap",
+            "path": "function/tavily/map.py",
+            "description": "从一个根链接出发遍历站点, 只返回发现的所有页面链接(站点地图), 不抓取正文. 用于先摸清站点结构、再决定要抓哪些页; 不要用于需要正文内容的场合(用 tavilyExtract / tavilyCrawl). ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "测绘的根链接. 必填. "
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "自然语言指令, 用于引导要发现哪类页面. 默认值: null. "
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "遍历深度, 距根链接的最远层数. 取值范围 1-5. 默认值: 1. ",
+                        "minimum": 1,
+                        "maximum": 5
+                    },
+                    "max_breadth": {
+                        "type": "integer",
+                        "description": "每层最多跟随的链接数. 取值范围 1-500. 默认值: 20. ",
+                        "minimum": 1,
+                        "maximum": 500
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "处理的总链接数上限. 取值范围 1-500. 默认值: 50. ",
+                        "minimum": 1,
+                        "maximum": 500
+                    },
+                    "select_paths": {
+                        "type": "array",
+                        "description": "只保留路径匹配这些正则的链接. 默认值: null. ",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "exclude_paths": {
+                        "type": "array",
+                        "description": "排除路径匹配这些正则的链接. 默认值: null. ",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "allow_external": {
+                        "type": "boolean",
+                        "description": "是否包含站外域名的链接. 默认值: true. "
+                    }
+                },
+                "required": [
+                    "url"
+                ]
             }
-          },
-          "allow_external": {
-            "type": "boolean",
-            "description": "是否包含站外域名的链接. 默认值: true. "
-          }
         },
-        "required": [
-          "url"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "sessionSummary",
-      "path": "function/sessionSummary/sessionSummary.py",
-      "description": "用于压缩当前加载的 session（含外部身份会话）的上下文. 将超出保留轮次的旧对话归档至 history, 并以 content 作为 session 历史提要写入新上下文开头, 同时保留最近若干轮原始对话. 仅在上下文接近或超过压缩阈值时调用, 不得用于写入长期记忆、详细记忆或普通信息查询. ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "type": "string",
-            "description": "压缩后的会话摘要, 将作为 'session历史提要' 写入新上下文开头, 用于衔接被归档的旧对话. 应概括被压缩部分的关键信息: 事件脉络、已达成的结论、未完成的意图、对后续交互有影响的状态或约定. 内容应准确、简洁、语义完整, 不得遗漏会影响后续对话的关键信息, 也不得包含与本次会话无关的内容. "
-          }
-        },
-        "required": [
-          "content"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "readFiles",
-      "path": "function/fileOperation/readFiles.py",
-      "description": "读取一个或多个文件的内容。paths 支持相对 agent 根目录的路径，也支持绝对路径；读取范围不限在 agent 根目录内，但会被黑名单目录/条目拦截(命中时返回 [ERROR]，不得重试或绕过)。可用 lineStart / lineEnd 指定行号区间（1-based，含两端）：指定区间时正文带原文行号前缀，便于与 listFiles 报出的行号对接；区间边界可能切断代码块或表格，必要时向后多读几行再判断。返回结果总字符数存在 100k 硬上限；超出时可能截断或仅返回部分内容。默认单文件最多读取 3000 字符，默认最多读取 3 个文件。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "paths": {
-            "type": "array",
-            "description": "目标文件路径列表。建议使用相对 agent 根目录的路径，例如 ConsciousnessRealm/memory/memory.json。也可传绝对路径；两者都受黑名单拦截。每一项必须指向文件，不得传目录。",
-            "items": {
-              "type": "string"
+        {
+            "type": "function",
+            "name": "sessionSummary",
+            "path": "function/sessionSummary/sessionSummary.py",
+            "description": "用于压缩当前加载的 session（含外部身份会话）的上下文. 将超出保留轮次的旧对话归档至 history, 并以 content 作为 session 历史提要写入新上下文开头, 同时保留最近若干轮原始对话. 仅在上下文接近或超过压缩阈值时调用, 不得用于写入长期记忆、详细记忆或普通信息查询. ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "压缩后的会话摘要, 将作为 'session历史提要' 写入新上下文开头, 用于衔接被归档的旧对话. 应概括被压缩部分的关键信息: 事件脉络、已达成的结论、未完成的意图、对后续交互有影响的状态或约定. 内容应准确、简洁、语义完整, 不得遗漏会影响后续对话的关键信息, 也不得包含与本次会话无关的内容. "
+                    }
+                },
+                "required": [
+                    "content"
+                ]
             }
-          },
-          "lineStart": {
-            "type": "integer",
-            "description": "起始行号，1-based，含该行。不传时表示从第 1 行起。",
-            "minimum": 1
-          },
-          "lineEnd": {
-            "type": "integer",
-            "description": "结束行号，1-based，含该行。不传时表示读到文件末尾。不得小于 lineStart。",
-            "minimum": 1
-          },
-          "maxCharsPerFile": {
-            "type": "integer",
-            "description": "单文件最多读取字符数。不传时默认为 3000。最小 500，最大 40000。超过上限时按上限截断。",
-            "minimum": 500,
-            "maximum": 40000
-          },
-          "maxFiles": {
-            "type": "integer",
-            "description": "最大读取文件数量。不传时默认为 3。最小 1，最大 10。超过上限时只读取前 maxFiles 个文件。",
-            "minimum": 1,
-            "maximum": 10
-          }
         },
-        "required": [
-          "paths"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "listFiles",
-      "path": "function/fileOperation/listFiles.py",
-      "description": "获取指定路径下的全部文件与文件夹路径。支持按名称正则匹配，或按文件内容正则搜索。paths 可传相对路径或绝对路径：相对路径默认相对于 agent 根目录。返回结果包含完整路径：文件返回文件路径，空文件夹返回其完整路径；content/all 模式只返回命中的文件路径与行号，不返回匹配到的行内容；行号按原文计数（含空行），可直接作为 readFiles 的 lineStart / lineEnd 使用。返回结果不含文件内容，不得据路径推断文件内容；返回顺序为文件系统遍历顺序，不代表任何配置或逻辑顺序；不得对未列出的路径作任何断言。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "paths": {
-            "type": "string",
-            "description": "待查询的路径，只接受单个路径。可传目录：返回其下全部文件夹路径与文件路径（空文件夹返回其完整路径）；也可直接传文件：返回该文件自身。可传相对路径或绝对路径，相对路径默认相对于 agent 根目录。"
-          },
-          "pattern": {
-            "type": "string",
-            "description": "正则表达式，用于过滤结果。匹配目标由 matchMode 决定：name 模式下匹配完整路径；content 模式下匹配文件内容；all 模式下同时匹配完整路径与文件内容。不传 pattern 时，默认返回全部结果。"
-          },
-          "matchMode": {
-            "type": "string",
-            "description": "name：默认模式，只对完整路径进行正则匹配；content：只对文件内容进行正则匹配；all：同时对完整路径与文件内容进行匹配。不传时默认为 name。",
-            "enum": [
-              "name",
-              "content",
-              "all"
-            ]
-          },
-          "maxDepth": {
-            "type": "integer",
-            "description": "递归查询深度。默认为 3。最小 1，最大 5。深度 1 表示只查询 paths 的直接子级，不继续向下递归；超过 maxDepth 的层级不返回。",
-            "minimum": 1,
-            "maximum": 5
-          },
-          "maxList": {
-            "type": "integer",
-            "description": "最大返回路径条数。默认为 20。最小 10，最大 500。超过上限时只返回最先遍历得到的 maxList 条路径。",
-            "minimum": 10,
-            "maximum": 500
-          }
+        {
+            "type": "function",
+            "name": "readFiles",
+            "path": "function/fileOperation/readFiles.py",
+            "description": "读取一个或多个文件的内容。paths 支持相对 agent 根目录的路径，也支持绝对路径；读取范围不限在 agent 根目录内，但会被黑名单目录/条目拦截(命中时返回 [ERROR]，不得重试或绕过)。可用 lineStart / lineEnd 指定行号区间（1-based，含两端）：指定区间时正文带原文行号前缀，便于与 listFiles 报出的行号对接；区间边界可能切断代码块或表格，必要时向后多读几行再判断。返回结果总字符数存在 100k 硬上限；超出时可能截断或仅返回部分内容。默认单文件最多读取 3000 字符，默认最多读取 3 个文件。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "description": "目标文件路径列表。建议使用相对 agent 根目录的路径，例如 ConsciousnessRealm/memory/memory.json。也可传绝对路径；两者都受黑名单拦截。每一项必须指向文件，不得传目录。",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "lineStart": {
+                        "type": "integer",
+                        "description": "起始行号，1-based，含该行。不传时表示从第 1 行起。",
+                        "minimum": 1
+                    },
+                    "lineEnd": {
+                        "type": "integer",
+                        "description": "结束行号，1-based，含该行。不传时表示读到文件末尾。不得小于 lineStart。",
+                        "minimum": 1
+                    },
+                    "maxCharsPerFile": {
+                        "type": "integer",
+                        "description": "单文件最多读取字符数。不传时默认为 3000。最小 500，最大 40000。超过上限时按上限截断。",
+                        "minimum": 500,
+                        "maximum": 40000
+                    },
+                    "maxFiles": {
+                        "type": "integer",
+                        "description": "最大读取文件数量。不传时默认为 3。最小 1，最大 10。超过上限时只读取前 maxFiles 个文件。",
+                        "minimum": 1,
+                        "maximum": 10
+                    }
+                },
+                "required": [
+                    "paths"
+                ]
+            }
         },
-        "required": [
-          "paths"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "writeFile",
-      "path": "function/fileOperation/writeFile.py",
-      "description": "在指定路径下创建或写入文件。路径可传相对路径或绝对路径，相对路径默认相对于 agent 根目录；会被黑名单拦截（命中时返回 [ERROR]，不得重试或绕过）。updateMode 决定写入方式：overwrite（默认）覆盖、append 追加、create 仅新建（目标已存在则拒绝）。正文原样写入，换行按原文、不做任何改写；采用临时文件 + 原子替换，中途失败不会留下半成品。返回结果包含动作、字符数、行数与落盘字节数。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "paths": {
-            "type": "string",
-            "description": "要写入内容的文件路径。可传相对路径或绝对路径：相对路径默认相对于 agent 根目录。路径必须指向文件，不得传目录。"
-          },
-          "content": {
-            "type": "string",
-            "description": "要写入的文件正文。必须为完整、确定的文本；不得写占位符、省略或半成品。正文按原文落盘，换行与末尾有无换行都由这里决定。"
-          },
-          "updateMode": {
-            "type": "string",
-            "description": "写入方式。'overwrite'：覆盖（默认）；'append'：在原有内容之后追加；'create'：仅新建，目标已存在则拒绝。不传时默认为 overwrite。",
-            "enum": [
-              "overwrite",
-              "append",
-              "create"
-            ]
-          }
+        {
+            "type": "function",
+            "name": "listFiles",
+            "path": "function/fileOperation/listFiles.py",
+            "description": "获取指定路径下的全部文件与文件夹路径。支持按名称正则匹配，或按文件内容正则搜索。paths 可传相对路径或绝对路径：相对路径默认相对于 agent 根目录。返回结果包含完整路径：文件返回文件路径，空文件夹返回其完整路径；content/all 模式只返回命中的文件路径与行号，不返回匹配到的行内容；行号按原文计数（含空行），可直接作为 readFiles 的 lineStart / lineEnd 使用。返回结果不含文件内容，不得据路径推断文件内容；返回顺序为文件系统遍历顺序，不代表任何配置或逻辑顺序；不得对未列出的路径作任何断言。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "string",
+                        "description": "待查询的路径，只接受单个路径。可传目录：返回其下全部文件夹路径与文件路径（空文件夹返回其完整路径）；也可直接传文件：返回该文件自身。可传相对路径或绝对路径，相对路径默认相对于 agent 根目录。"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "正则表达式，用于过滤结果。匹配目标由 matchMode 决定：name 模式下匹配完整路径；content 模式下匹配文件内容；all 模式下同时匹配完整路径与文件内容。不传 pattern 时，默认返回全部结果。"
+                    },
+                    "matchMode": {
+                        "type": "string",
+                        "description": "name：默认模式，只对完整路径进行正则匹配；content：只对文件内容进行正则匹配；all：同时对完整路径与文件内容进行匹配。不传时默认为 name。",
+                        "enum": [
+                            "name",
+                            "content",
+                            "all"
+                        ]
+                    },
+                    "maxDepth": {
+                        "type": "integer",
+                        "description": "递归查询深度。默认为 3。最小 1，最大 5。深度 1 表示只查询 paths 的直接子级，不继续向下递归；超过 maxDepth 的层级不返回。",
+                        "minimum": 1,
+                        "maximum": 5
+                    },
+                    "maxList": {
+                        "type": "integer",
+                        "description": "最大返回路径条数。默认为 20。最小 10，最大 500。超过上限时只返回最先遍历得到的 maxList 条路径。",
+                        "minimum": 10,
+                        "maximum": 500
+                    }
+                },
+                "required": [
+                    "paths"
+                ]
+            }
         },
-        "required": [
-          "paths",
-          "content"
-        ]
-      }
-    },
-    {
-      "type": "function",
-      "name": "speak",
-      "path": "function/tts/speak.py",
-      "description": "把一段文字合成为语音文件，返回音频的绝对路径与字数. 仅在需要真的发出声音（语音消息、朗读、出声回应）时调用. 单次合成有字数上限，过长时需拆成几句分别调用. 不得用它代替普通文字回复，也不得在未调用成功时声称自己已经说话. ",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "description": "要读出来的内容. 按最终要说出口的话原样给出，不要包含动作、旁白、括号说明或 Markdown 标记；不得用占位符、省略号代替正文. "
-          },
-          "voice": {
-            "type": "string",
-            "description": "可选，覆盖音色. edge 后端填微软语音名（如 zh-CN-XiaoxiaoNeural）；local 后端一般留空，沿用参考音频的音色. 不传则用 config.json 的默认值. "
-          },
-          "rate": {
-            "type": "string",
-            "description": "可选，语速调整，如 '+10%' 或 '-15%'. 仅在明确需要放慢或加快时传，默认 '+0%'. ",
-            "pattern": "^[+-]\\d{1,3}%$"
-          },
-          "backend": {
-            "type": "string",
-            "description": "可选，合成后端. 'edge'：在线语音，快，但不是克隆音色；'local'：本地克隆服务，音色接近原声，但需要服务已启动. 不传则用 config.json 的默认值. ",
-            "enum": [
-              "edge",
-              "local"
-            ]
-          }
+        {
+            "type": "function",
+            "name": "writeFile",
+            "path": "function/fileOperation/writeFile.py",
+            "description": "在指定路径下创建或写入文件。路径可传相对路径或绝对路径，相对路径默认相对于 agent 根目录；会被黑名单拦截（命中时返回 [ERROR]，不得重试或绕过）。updateMode 决定写入方式：overwrite（默认）覆盖、append 追加、create 仅新建（目标已存在则拒绝）。正文原样写入，换行按原文、不做任何改写；采用临时文件 + 原子替换，中途失败不会留下半成品。返回结果包含动作、字符数、行数与落盘字节数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "string",
+                        "description": "要写入内容的文件路径。可传相对路径或绝对路径：相对路径默认相对于 agent 根目录。路径必须指向文件，不得传目录。"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入的文件正文。必须为完整、确定的文本；不得写占位符、省略或半成品。正文按原文落盘，换行与末尾有无换行都由这里决定。"
+                    },
+                    "updateMode": {
+                        "type": "string",
+                        "description": "写入方式。'overwrite'：覆盖（默认）；'append'：在原有内容之后追加；'create'：仅新建，目标已存在则拒绝。不传时默认为 overwrite。",
+                        "enum": [
+                            "overwrite",
+                            "append",
+                            "create"
+                        ]
+                    }
+                },
+                "required": [
+                    "paths",
+                    "content"
+                ]
+            }
         },
-        "required": [
-          "text"
-        ]
-      }
-    }
-  ]
+        {
+            "type": "function",
+            "name": "speak",
+            "path": "function/tts/speak.py",
+            "description": "把一段文字合成为语音文件，返回音频的绝对路径与字数. 仅在需要真的发出声音（语音消息、朗读、出声回应）时调用. 单次合成有字数上限，过长时需拆成几句分别调用. 不得用它代替普通文字回复，也不得在未调用成功时声称自己已经说话. ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "要读出来的内容. 按最终要说出口的话原样给出，不要包含动作、旁白、括号说明或 Markdown 标记；不得用占位符、省略号代替正文. "
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "可选，覆盖音色. edge 后端填微软语音名（如 zh-CN-XiaoxiaoNeural）；local 后端一般留空，沿用参考音频的音色. 不传则用 config.json 的默认值. "
+                    },
+                    "rate": {
+                        "type": "string",
+                        "description": "可选，语速调整，如 '+10%' 或 '-15%'. 仅在明确需要放慢或加快时传，默认 '+0%'. ",
+                        "pattern": "^[+-]\\d{1,3}%$"
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "可选，合成后端. 'edge'：在线语音，快，但不是克隆音色；'local'：本地克隆服务，音色接近原声，但需要服务已启动. 不传则用 config.json 的默认值. ",
+                        "enum": [
+                            "edge",
+                            "local"
+                        ]
+                    }
+                },
+                "required": [
+                    "text"
+                ]
+            }
+        },
+        {
+            "type": "function",
+            "name": "remember",
+            "path": "function/remember/remember.py",
+            "description": "把当下值得记住的事写成一条记忆块，之后会按相关性被召回。只用于记住对方明确要你记住的事、或你自己判断值得长期留着的事；不要用它写长期记忆文件，也不要记录一次性的琐碎对话。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "要记住的内容，10~200 字，第一人称，写判断或结论，不要复述对话。"
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "涉及的人或事物，用于归类，例如「奥比娜」「玛嘉烈」。可省略。"
+                    }
+                },
+                "required": [
+                    "text"
+                ]
+            }
+        },
+        {
+            "type": "function",
+            "name": "plan",
+            "path": "function/plan/plan.py",
+            "description": "管理她自己的目标。只在确立、推进或放弃一件要花一段时间的事时调用；日常琐事不要记成目标。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list",
+                            "add",
+                            "step_done",
+                            "revise",
+                            "pause",
+                            "resume",
+                            "done",
+                            "abandon"
+                        ]
+                    },
+                    "goal": {
+                        "type": "string",
+                        "description": "目标 id，除 list/add 外必填。"
+                    },
+                    "objective": {
+                        "type": "string",
+                        "description": "add 时必填：要做成什么。"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "add 时的步骤列表。"
+                    },
+                    "step": {
+                        "type": "integer",
+                        "description": "step_done 时必填：第几步。"
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "备注：为什么改、为什么放弃、这一步做成了什么。"
+                    }
+                },
+                "required": [
+                    "action"
+                ]
+            }
+        }
+    ]
 }

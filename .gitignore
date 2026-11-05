@@ -48,3 +48,5 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
+state/file/
+state/realTime/

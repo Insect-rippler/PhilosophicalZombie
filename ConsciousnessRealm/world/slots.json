@@ -1,0 +1,30 @@
+{
+  "_doc": "槽位表：代码只认 id，容量由数据决定。身体只有一个——同一时刻只能做一件占身的事（移动、做饭、洗澡、睡觉）。秒级且不移动的动作不进槽，直接生效。",
+  "slots": [
+    {
+      "id": "active",
+      "kind": "action",
+      "capacity": 1,
+      "label": "身体",
+      "description": "占身的事：移动、做饭、洗澡、练剑、睡觉。同一时刻只能有一件。"
+    },
+    {
+      "id": "event.random",
+      "kind": "event",
+      "capacity": 1,
+      "label": "随机事件"
+    },
+    {
+      "id": "goal.short",
+      "kind": "goal",
+      "capacity": 3,
+      "label": "短目标"
+    },
+    {
+      "id": "goal.long",
+      "kind": "goal",
+      "capacity": 1,
+      "label": "长目标"
+    }
+  ]
+}

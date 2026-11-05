@@ -262,6 +262,29 @@ class MemoryLibrary:
         return len(todo)
 
     # ---------- 功能 1：检索 ----------
+    def record(self, hits):
+        """给被召回的条目累加次数与字数，返回实际累加的条数。
+
+        hits: [{"id":..., "chars":...}] 或纯 id 列表。
+        与 search(record=True) 的区别：这里只统计最终真正注入上下文的那部分；
+        recalled_chars 是升格判据（召回字数），不是召回次数。
+        """
+        rows = {}
+        for h in hits:
+            if isinstance(h, dict):
+                rows[h["id"]] = int(h.get("chars") or 0)
+            else:
+                rows[h] = 0
+        n = 0
+        for it in self.items:
+            if it["id"] in rows:
+                it["recalls"] = int(it.get("recalls", 0)) + 1
+                it["recalled_chars"] = int(it.get("recalled_chars", 0)) + rows[it["id"]]
+                n += 1
+        if n:
+            self._save()
+        return n
+
     def search(
         self,
         query: str,
@@ -315,13 +338,16 @@ class MemoryLibrary:
 
     # ---------- 功能 2：单条维护 ----------
     def add(self, texts: str | Sequence[str], *, kind: str = "slice",
-            tag: str | None = None) -> list[str]:
+            tag: str | None = None, sources=None) -> list[str]:
         """新增条目并计算向量，返回新 id。kind='block' 时可带 tag（对谁）。"""
         if kind not in PREFIX:
             raise MemoryError_(f"kind 只能是 slice 或 block，收到 {kind}")
         texts = [texts] if isinstance(texts, str) else [t for t in texts if str(t).strip()]
         if not texts:
             return []
+        if isinstance(sources, str) or sources is None:
+            sources = [sources] * len(texts) if sources else [None] * len(texts)
+        sources = list(sources) + [None] * (len(texts) - len(sources))
         prefix = PREFIX[kind]
         new_ids = []
         for text in texts:
@@ -332,6 +358,10 @@ class MemoryLibrary:
             item = {"id": ident, "text": text, "recalls": 0, "kind": kind}
             if kind == "block" and tag:
                 item["tag"] = tag
+            src = sources[len(new_ids)]
+            if src:
+                # 传进来可能是单个 id 字符串，别用 list() 拆成字符
+                item["sources"] = src if isinstance(src, list) else [src]
             self.items.append(item)
             new_ids.append(ident)
         self._ensure_vectors(new_ids)
@@ -425,8 +455,9 @@ def search(query: str, *, top_k: int = 5, min_score: float | None = DEFAULT_MIN_
                         block_min_score=block_min_score, record=record, kind=kind)
 
 
-def add(texts, *, kind: str = "slice", tag: str | None = None) -> list[str]:
-    return lib().add(texts, kind=kind, tag=tag)
+def add(texts, *, kind: str = "slice", tag: str | None = None,
+        sources=None) -> list[str]:
+    return lib().add(texts, kind=kind, tag=tag, sources=sources)
 
 
 def update(ident: str, text: str) -> None:

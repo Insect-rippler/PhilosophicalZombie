@@ -22,4 +22,14 @@
 |---|---|
 | `payload.api` | DeepSeek API key |
 | `payload.model` | 模型名（如 `deepseek-flash`） |
-| `harness.prompt_type_order` | 上下文段落顺序，`session` 之前的都是 system 级 |
+| `payload.temperature` | 采样温度。工具调用场景建议 ≤1.0，1.5 会让工具回合发散 |
+| `harness.loop.maxRounds` | 一轮对话里最多几次「模型→工具→再模型」 |
+| `harness.loop.maxToolOutput` | 单个工具结果回灌的最大字数 |
+| `harness.session.compressionThreshold` | 上下文达到多少 token 时提示压缩 |
+| `harness.retrieval.*` | 检索参数：查询轮数、召回条数、相关性阈值、世界书预算 |
+| `harness.plan.*` | 计划渲染：步骤窗口、各类目标条数 |
+| `harness.subprocess.timeout` | 工具执行超时（秒） |
+| `harness.network.verifySSL` | 是否校验 TLS 证书；走本地代理 MITM 时设 `false` |
+| — | 段落顺序已从配置移到 `ConsciousnessRealm/AGENT.md` |
+
+检索参数的语义和取值依据见项目 `README.md` 的「开销」一节。代码里对这些字段都带默认值：缺失或类型不对时会回退并在 stderr 提示，不会崩。

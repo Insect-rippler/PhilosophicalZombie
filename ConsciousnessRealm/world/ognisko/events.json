@@ -1,0 +1,961 @@
+{
+  "_doc": "事件池。每个池一次只抽一件事：把条件通过的事件按 weight 加权，再加上一条「什么都不发生」，其权重 = nothingRatio × 事件权重和。scope=location 只在切到该地点时抽；requires.places 对两类都生效。",
+  "pools": {
+    "dawn": {
+      "hours": [
+        3,
+        6
+      ],
+      "every": 60,
+      "events": [
+        "wake_insomnia",
+        "wake_dream",
+        "wake_birds"
+      ],
+      "nothingRatio": 9
+    },
+    "morning": {
+      "hours": [
+        6,
+        11
+      ],
+      "every": 120,
+      "events": [
+        "talk_urge",
+        "thought_obina",
+        "thought_letter",
+        "body_stiff",
+        "hall_notice",
+        "hunt_offer",
+        "comm_boar_after"
+      ],
+      "nothingRatio": 9
+    },
+    "afternoon": {
+      "hours": [
+        11,
+        17
+      ],
+      "every": 120,
+      "events": [
+        "talk_urge",
+        "walk_urge",
+        "read_urge",
+        "thought_margaret",
+        "hunt_tracks",
+        "comm_boar_rumor",
+        "comm_reputation"
+      ],
+      "nothingRatio": 9
+    },
+    "evening": {
+      "hours": [
+        17,
+        22
+      ],
+      "every": 120,
+      "events": [
+        "talk_urge",
+        "drink_urge",
+        "thought_past",
+        "lantern_lit",
+        "tired_urge",
+        "hurt_recover",
+        "comm_construct_after"
+      ],
+      "nothingRatio": 9
+    },
+    "night": {
+      "hours": [
+        22,
+        3
+      ],
+      "every": 240,
+      "events": [
+        "night_knock",
+        "night_noise",
+        "night_awake",
+        "thought_past",
+        "deck_cold"
+      ],
+      "nothingRatio": 9
+    },
+    "day_afternoon": {
+      "hours": [
+        11,
+        17
+      ],
+      "every": 120,
+      "events": [
+        "talk_urge",
+        "walk_urge",
+        "read_urge",
+        "thought_margaret",
+        "hunt_tracks"
+      ],
+      "nothingRatio": 9
+    }
+  },
+  "targets": {
+    "people": [
+      {
+        "id": "obina",
+        "name": "奥比娜",
+        "weight": {
+          "base": 30,
+          "if": [
+            {
+              "when": {
+                "at": "workshop"
+              },
+              "value": 70
+            }
+          ]
+        }
+      },
+      {
+        "id": "user",
+        "name": "对方",
+        "weight": {
+          "base": 8,
+          "if": [
+            {
+              "when": {
+                "sinceUserHours": 4
+              },
+              "value": 50
+            }
+          ]
+        }
+      },
+      {
+        "id": "smiths",
+        "name": "工坊的师傅们",
+        "weight": {
+          "base": 20,
+          "if": [
+            {
+              "when": {
+                "at": "workshop"
+              },
+              "value": 35
+            }
+          ]
+        }
+      },
+      {
+        "id": "margaret",
+        "name": "玛嘉烈",
+        "weight": {
+          "base": 12
+        }
+      },
+      {
+        "id": "nobody",
+        "name": "谁也没有",
+        "weight": {
+          "base": 25
+        }
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": "market_flyer",
+      "scope": "location",
+      "places": [
+        "market"
+      ],
+      "hours": [
+        7,
+        21
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "集市口有人往她手里塞了张传单，油墨还没干透。",
+      "weight": 9
+    },
+    {
+      "id": "market_stall",
+      "scope": "location",
+      "places": [
+        "market"
+      ],
+      "hours": [
+        7,
+        21
+      ],
+      "requires": {
+        "sleeping": false,
+        "metabolism": {
+          "satiety": [
+            0,
+            60
+          ]
+        }
+      },
+      "text": "卖干果的摊主认得她，抓了一把塞进她手里，说不要钱。",
+      "weight": 10,
+      "variants": [
+        {
+          "when": {
+            "metabolism": {
+              "satiety": [
+                0,
+                35
+              ]
+            }
+          },
+          "text": "卖干果的摊主看了她一眼，抓了一把塞过来，说吃点垫垫。"
+        },
+        {
+          "when": {
+            "sleeping": false
+          },
+          "text": "卖干果的摊主认得她，抓了一把塞进她手里，说不要钱。"
+        }
+      ]
+    },
+    {
+      "id": "market_books",
+      "scope": "location",
+      "places": [
+        "market"
+      ],
+      "hours": [
+        8,
+        20
+      ],
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "旧书摊上摆着一本她找过很久的诗集，书脊已经松了。",
+      "weight": 7
+    },
+    {
+      "id": "market_quarrel",
+      "scope": "location",
+      "places": [
+        "market"
+      ],
+      "hours": [
+        8,
+        21
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "两个摊主为一块边界争起来，围观的人越聚越多。",
+      "weight": 6
+    },
+    {
+      "id": "workshop_quarrel",
+      "scope": "location",
+      "places": [
+        "workshop"
+      ],
+      "hours": [
+        7,
+        22
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "工坊里有人在跟奥比娜争执，声音压得很低。",
+      "weight": 7
+    },
+    {
+      "id": "workshop_apprentice",
+      "scope": "location",
+      "places": [
+        "workshop"
+      ],
+      "hours": [
+        7,
+        20
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "新来的学徒把一块铁烧过了头，正手忙脚乱地想补救。",
+      "weight": 9
+    },
+    {
+      "id": "workshop_order",
+      "scope": "location",
+      "places": [
+        "workshop"
+      ],
+      "hours": [
+        8,
+        19
+      ],
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "有人来订一把刀，说是给女儿出嫁用的，要求写得很细。",
+      "weight": 8
+    },
+    {
+      "id": "workshop_hush",
+      "scope": "location",
+      "places": [
+        "workshop"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "锤声忽然停了一下，所有人都停下手，像是听见了什么。",
+      "weight": 5,
+      "requires": {
+        "sleeping": false
+      }
+    },
+    {
+      "id": "deck_carving",
+      "scope": "location",
+      "places": [
+        "deck",
+        "edge"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "栏杆上不知谁刻了一行字，被风化得只剩一半。",
+      "weight": 6
+    },
+    {
+      "id": "deck_wind",
+      "scope": "location",
+      "places": [
+        "deck",
+        "edge"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "风比她想的更大，外套下摆被掀起来，打在腿上。",
+      "weight": 8,
+      "variants": [
+        {
+          "when": {},
+          "text": "风比她想的更大，外套下摆被掀起来，打在腿上。"
+        }
+      ]
+    },
+    {
+      "id": "deck_lights",
+      "scope": "location",
+      "places": [
+        "deck"
+      ],
+      "hours": [
+        17,
+        24
+      ],
+      "text": "远处有另一座移动城市的灯火，横着走过地平线。",
+      "weight": 7,
+      "requires": {
+        "sleeping": false
+      }
+    },
+    {
+      "id": "edge_rail",
+      "scope": "location",
+      "places": [
+        "edge"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "拐角一段护栏有些松了，螺丝露出半截。",
+      "weight": 4
+    },
+    {
+      "id": "kitchen_boil",
+      "scope": "location",
+      "places": [
+        "kitchen"
+      ],
+      "hours": [
+        6,
+        23
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "灶上的水开了，壶盖被顶得咔哒响。",
+      "weight": 9,
+      "variants": [
+        {
+          "when": {
+            "metabolism": {
+              "satiety": [
+                0,
+                40
+              ]
+            }
+          },
+          "text": "灶上的水开了，壶盖被顶得咔哒响。她这才想起自己还没吃东西。"
+        },
+        {
+          "when": {},
+          "text": "灶上的水开了，壶盖被顶得咔哒响。"
+        }
+      ]
+    },
+    {
+      "id": "kitchen_smell",
+      "scope": "location",
+      "places": [
+        "kitchen"
+      ],
+      "hours": [
+        6,
+        23
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "有人在烤面包，味道从炉门缝里漏出来。",
+      "weight": 8
+    },
+    {
+      "id": "kitchen_someone",
+      "scope": "location",
+      "places": [
+        "kitchen"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "有人在暗处吃东西，见她进来，慌忙把手里的东西藏到身后。",
+      "weight": 5
+    },
+    {
+      "id": "room_draft",
+      "scope": "location",
+      "places": [
+        "room"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "窗缝漏风，烛火被吹得歪向一边。",
+      "weight": 6
+    },
+    {
+      "id": "room_candle",
+      "scope": "location",
+      "places": [
+        "room"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "text": "蜡烛烧到了底，灯芯塌下去，屋里暗了一瞬。",
+      "weight": 5
+    },
+    {
+      "id": "hall_called",
+      "scope": "location",
+      "places": [
+        "hall"
+      ],
+      "hours": [
+        7,
+        22
+      ],
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "有人在街对面喊她的名字，喊了两声才认出是谁。",
+      "weight": 8,
+      "variants": [
+        {
+          "when": {
+            "busy": false
+          },
+          "text": "有人在街对面喊她的名字，喊了两声才认出是谁。"
+        }
+      ]
+    },
+    {
+      "id": "hall_children",
+      "scope": "location",
+      "places": [
+        "hall"
+      ],
+      "hours": [
+        8,
+        19
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "一群孩子从主街上跑过，其中一个回头看了她一眼。",
+      "weight": 7
+    },
+    {
+      "id": "hall_banner",
+      "scope": "location",
+      "places": [
+        "hall"
+      ],
+      "hours": [
+        8,
+        20
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "有家店铺换了新招牌，字写得歪，漆还没干。",
+      "weight": 6
+    },
+    {
+      "id": "talk_urge",
+      "scope": "global",
+      "targets": "people",
+      "requires": {
+        "sleeping": false,
+        "busy": false,
+        "sinceUserHours": 2
+      },
+      "text": "这个时辰她忽然很想找人说话——{target}。",
+      "weight": 8,
+      "variants": [
+        {
+          "when": {
+            "sinceUserHours": 8
+          },
+          "text": "很久没和人说话了，她忽然很想找人说点什么——{target}。"
+        },
+        {
+          "when": {},
+          "text": "这个时辰她忽然很想找人说话——{target}。"
+        }
+      ]
+    },
+    {
+      "id": "thought_obina",
+      "scope": "global",
+      "requires": {
+        "sleeping": false,
+        "at": "workshop"
+      },
+      "text": "她想起奥比娜说过的一句话，越想越觉得当时没听懂。",
+      "weight": 6
+    },
+    {
+      "id": "thought_letter",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "有封信写到一半，她想不起来要接什么。",
+      "weight": 5
+    },
+    {
+      "id": "body_stiff",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "旧伤在阴天里发紧，抬手时慢了半拍。",
+      "weight": 6
+    },
+    {
+      "id": "walk_urge",
+      "scope": "global",
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "坐得太久了，她想站起来走一走。",
+      "weight": 5
+    },
+    {
+      "id": "read_urge",
+      "scope": "global",
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "忽然很想读几页诗，哪怕只看一段。",
+      "weight": 5
+    },
+    {
+      "id": "thought_margaret",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "不知道玛嘉烈那边现在是什么光景。",
+      "weight": 6
+    },
+    {
+      "id": "drink_urge",
+      "scope": "global",
+      "requires": {
+        "sleeping": false,
+        "busy": false,
+        "metabolism": {
+          "hydration": [
+            0,
+            50
+          ]
+        }
+      },
+      "text": "嘴里发干，想找点水喝。",
+      "weight": 4
+    },
+    {
+      "id": "thought_past",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "有些旧事不合时宜地冒出来，她按了按眉心。",
+      "weight": 4
+    },
+    {
+      "id": "lantern_lit",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "街上的灯一盏盏亮起来，她站在原地看了一会儿。",
+      "weight": 5
+    },
+    {
+      "id": "night_knock",
+      "scope": "global",
+      "places": [
+        "room"
+      ],
+      "wake": true,
+      "text": "有人敲了她的门，敲得很轻，像是怕吵到别人。",
+      "weight": 7
+    },
+    {
+      "id": "night_noise",
+      "scope": "global",
+      "places": [
+        "room"
+      ],
+      "requires": {
+        "sleeping": true
+      },
+      "wake": true,
+      "text": "隔壁有人在搬东西，铁器磕在甲板上，响了很久。",
+      "weight": 10
+    },
+    {
+      "id": "night_awake",
+      "scope": "global",
+      "requires": {
+        "sleeping": true
+      },
+      "wake": true,
+      "text": "她醒了一次，屋里很黑，一时想不起自己在哪。",
+      "weight": 6,
+      "places": [
+        "room"
+      ]
+    },
+    {
+      "id": "wake_insomnia",
+      "scope": "global",
+      "requires": {
+        "sleeping": true
+      },
+      "wake": true,
+      "text": "睡不着。天还早，外面一点声音都没有。",
+      "weight": 6
+    },
+    {
+      "id": "wake_dream",
+      "scope": "global",
+      "requires": {
+        "sleeping": true
+      },
+      "wake": true,
+      "text": "梦见高塔上的那间屋子，醒来时心口还发闷。",
+      "weight": 5
+    },
+    {
+      "id": "wake_birds",
+      "scope": "global",
+      "requires": {
+        "sleeping": false
+      },
+      "text": "天快亮了，有鸟在甲板外面叫，叫得很急。",
+      "weight": 5
+    },
+    {
+      "id": "workshop_rain",
+      "scope": "location",
+      "places": [
+        "workshop"
+      ],
+      "hours": [
+        0,
+        24
+      ],
+      "weight": 6,
+      "text": "屋顶的铁皮被雨点砸得响，说话得提高一点声音。"
+    },
+    {
+      "id": "kitchen_short",
+      "scope": "location",
+      "places": [
+        "kitchen"
+      ],
+      "hours": [
+        6,
+        23
+      ],
+      "weight": 7,
+      "requires": {
+        "sleeping": false
+      },
+      "text": "面缸见了底，只剩一把，不够两个人吃。"
+    },
+    {
+      "id": "hall_notice",
+      "scope": "location",
+      "places": [
+        "hall"
+      ],
+      "hours": [
+        8,
+        20
+      ],
+      "weight": 6,
+      "requires": {
+        "sleeping": false
+      },
+      "text": "布告栏上贴了张新告示，说下周要检修水渠。"
+    },
+    {
+      "id": "deck_cold",
+      "scope": "location",
+      "places": [
+        "deck"
+      ],
+      "hours": [
+        0,
+        6
+      ],
+      "weight": 7,
+      "text": "甲板上比舱里冷得多，呼出的气会散成一小片白。"
+    },
+    {
+      "id": "tired_urge",
+      "scope": "global",
+      "weight": 7,
+      "requires": {
+        "sleeping": false,
+        "metabolism": {
+          "fatigue": [
+            110,
+            200
+          ]
+        }
+      },
+      "text": "身上发沉，站久了会想找个地方坐下。"
+    },
+    {
+      "id": "hunt_offer",
+      "scope": "location",
+      "places": [
+        "market",
+        "hall"
+      ],
+      "hours": [
+        7,
+        20
+      ],
+      "weight": 10,
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "有人在集市口打听，说地块外这几天野兽多了，问有没有愿意接的。"
+    },
+    {
+      "id": "hunt_tracks",
+      "scope": "location",
+      "places": [
+        "edge",
+        "deck"
+      ],
+      "hours": [
+        5,
+        19
+      ],
+      "weight": 8,
+      "requires": {
+        "sleeping": false
+      },
+      "text": "护栏外的空地上留着几行新鲜爪印，比她的手掌还宽。"
+    },
+    {
+      "id": "hurt_recover",
+      "scope": "global",
+      "weight": 9,
+      "requires": {
+        "sleeping": false,
+        "metabolism": {
+          "health": [
+            0,
+            70
+          ]
+        }
+      },
+      "text": "旧伤在阴天里发紧，抬手时慢了半拍。"
+    },
+    {
+      "id": "comm_boar_offer",
+      "scope": "location",
+      "places": [
+        "market",
+        "hall"
+      ],
+      "hours": [
+        7,
+        20
+      ],
+      "weight": 22,
+      "once": true,
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "铁匠们说地外的野猪这几天一直在拱地基，谁都不敢出去。有人问她要不要接。"
+    },
+    {
+      "id": "comm_boar_after",
+      "scope": "global",
+      "weight": 20,
+      "once": true,
+      "after": [
+        "comm_boar_offer"
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "variants": [
+        {
+          "when": {
+            "metabolism": {
+              "health": [
+                0,
+                80
+              ]
+            }
+          },
+          "text": "委托人看见她袖子底下缠着布，话到嘴边改成了「先歇两天」。"
+        },
+        {
+          "when": {},
+          "text": "委托人来道谢，说地基补上了，问她伤着没有。"
+        }
+      ]
+    },
+    {
+      "id": "comm_boar_rumor",
+      "scope": "location",
+      "places": [
+        "market",
+        "hall"
+      ],
+      "hours": [
+        9,
+        21
+      ],
+      "weight": 18,
+      "once": true,
+      "after": [
+        "comm_boar_after"
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "text": "集市上开始有人提起她的名字，说她一个人就把地外清了。"
+    },
+    {
+      "id": "comm_construct_offer",
+      "scope": "location",
+      "places": [
+        "edge",
+        "deck"
+      ],
+      "hours": [
+        18,
+        24
+      ],
+      "weight": 20,
+      "once": true,
+      "requires": {
+        "sleeping": false
+      },
+      "text": "夜里护栏外又有东西在绕圈，光一明一暗，看得人心里发毛。有人在旁边问她敢不敢去看。"
+    },
+    {
+      "id": "comm_construct_after",
+      "scope": "global",
+      "weight": 18,
+      "once": true,
+      "after": [
+        "comm_construct_offer"
+      ],
+      "requires": {
+        "sleeping": false
+      },
+      "variants": [
+        {
+          "when": {
+            "metabolism": {
+              "health": [
+                0,
+                80
+              ]
+            }
+          },
+          "text": "甲板上有人替她包了伤口，一句多余的话都没说，只把酒塞进她手里。"
+        },
+        {
+          "when": {},
+          "text": "看热闹的人散了大半，剩几个蹲在她带回来的东西旁边，谁也不说话。"
+        }
+      ]
+    },
+    {
+      "id": "comm_reputation",
+      "scope": "global",
+      "weight": 14,
+      "once": true,
+      "after": [
+        "comm_construct_after",
+        "comm_boar_rumor"
+      ],
+      "requires": {
+        "sleeping": false,
+        "busy": false
+      },
+      "text": "她走在主街上，发现有人认出她，却不再喊「烛骑士」——只朝她点了点头。"
+    }
+  ]
+}

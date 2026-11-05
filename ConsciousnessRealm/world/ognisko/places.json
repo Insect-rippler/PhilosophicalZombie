@@ -1,0 +1,63 @@
+{
+  "_doc": "奥格尼斯科：一座很大的移动地块，尺度按现实街区来算——从一头走到另一头要小半小时。minutes 是步行耗时（分钟），links 单向，双向要各写一条。",
+  "name": "奥格尼斯科",
+  "kind": "mobile_plot",
+  "docked_at": "卡西米尔边境",
+  "places": [
+    {
+      "id": "deck",
+      "name": "甲板",
+      "path": "奥格尼斯科/甲板",
+      "tags": ["室外", "风大", "能看远"],
+      "links": [{"to": "hall", "minutes": 8}, {"to": "edge", "minutes": 10}]
+    },
+    {
+      "id": "hall",
+      "name": "主街",
+      "path": "奥格尼斯科/主街",
+      "tags": ["通道", "人多", "店铺"],
+      "links": [
+        {"to": "deck", "minutes": 8},
+        {"to": "workshop", "minutes": 6},
+        {"to": "kitchen", "minutes": 7},
+        {"to": "market", "minutes": 12},
+        {"to": "room", "minutes": 9}
+      ]
+    },
+    {
+      "id": "workshop",
+      "name": "工坊区",
+      "path": "奥格尼斯科/工坊区",
+      "tags": ["室内", "炉火", "铁匠", "锤声"],
+      "links": [{"to": "hall", "minutes": 6}, {"to": "kitchen", "minutes": 4}]
+    },
+    {
+      "id": "kitchen",
+      "name": "厨房",
+      "path": "奥格尼斯科/厨房",
+      "tags": ["室内", "有灶", "热气"],
+      "links": [{"to": "hall", "minutes": 7}, {"to": "workshop", "minutes": 4}]
+    },
+    {
+      "id": "room",
+      "name": "她的房间",
+      "path": "奥格尼斯科/她的房间",
+      "tags": ["室内", "安静", "书多"],
+      "links": [{"to": "hall", "minutes": 9}]
+    },
+    {
+      "id": "market",
+      "name": "集市",
+      "path": "奥格尼斯科/集市",
+      "tags": ["室外", "人多", "摊位", "喧闹"],
+      "links": [{"to": "hall", "minutes": 12}]
+    },
+    {
+      "id": "edge",
+      "name": "地块边缘",
+      "path": "奥格尼斯科/地块边缘",
+      "tags": ["室外", "护栏", "能看远", "风大"],
+      "links": [{"to": "deck", "minutes": 10}]
+    }
+  ]
+}

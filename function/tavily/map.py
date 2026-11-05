@@ -1,11 +1,11 @@
 from pathlib import Path
-import json
+import json, os
 import requests
 import sys
 url = "https://api.tavily.com/map"
 # ---------------- 路径变量 ----------------
 agent = Path(__file__).resolve().parents[2]
-CFGPath = Path(agent).joinpath(f"{Path(agent).name}.json")
+CFGPath = Path(agent).joinpath("state", "Philosophical.json")
 configPath = Path(agent).joinpath("function", "tavily", "config.json")
 
 # ---------------- config校验表 ----------------
@@ -37,8 +37,8 @@ except FileNotFoundError:
     raise FileNotFoundError(f"[Error] 配置文件不存在：{CFGPath}。\n请检查路径是否正确、文件是否被移动或删除。\n不得编造配置内容，不得假装读取成功。\n应以角色身份表达困惑、停顿或询问，不得原样复述本警告。")
 except json.JSONDecodeError as e:
     raise RuntimeError(f"[Error] 配置文件解析失败：{CFGPath}：{e}。\n文件可能格式错误、包含非法字符或已损坏。\n请勿编造配置内容，勿假装读取成功。\n应以角色身份表达困惑、停顿或询问，不得原样复述本警告。\n若可重试，请修正文件或稍后重试；若无法恢复，请向用户说明配置读取失败。") from e
-tavilyCFG = envCFG.get("config", {}).get("tavily", {})
-tavilyKey = tavilyCFG.get("api", "")
+tavilyCFG = envCFG.get("tools", {}).get("tavily", {})
+tavilyKey = os.environ.get("TAVILY_API_KEY") or tavilyCFG.get("api", "")
 if not tavilyKey:
     raise ValueError(f"[Error] map api 未正确配置：缺少 Tavily API Key。请检查配置后重试，不得编造站点地图或假装联网成功。")
 # ---------------- config初始化 ----------------

@@ -1,0 +1,76 @@
+{
+  "_doc": "生理提醒。条件满足就必触发，不看概率。越界触发一次：回落到正常再越界才会再提醒。needs 是区间，值落在区间内算成立。",
+  "reminders": [
+    {
+      "id": "hungry",
+      "needs": {
+        "satiety": [
+          0,
+          25
+        ]
+      },
+      "text": "胃里空得发慌，再不吃东西手会抖。"
+    },
+    {
+      "id": "thirsty",
+      "needs": {
+        "hydration": [
+          0,
+          25
+        ]
+      },
+      "text": "喉咙干得发疼，说话都得先咽一下。"
+    },
+    {
+      "id": "exhausted",
+      "needs": {
+        "fatigue": [
+          150,
+          200
+        ]
+      },
+      "text": "腿在抖，站久了眼前会发白。"
+    },
+    {
+      "id": "sleepy",
+      "needs": {
+        "sleepiness": [
+          88,
+          100
+        ],
+        "sleeping": false
+      },
+      "text": "眼皮沉得抬不起来，脑子像隔了一层。"
+    },
+    {
+      "id": "feverish",
+      "needs": {
+        "bodyTemperature": [
+          38.0,
+          40.0
+        ]
+      },
+      "text": "烧得厉害，指尖发凉，额头却是烫的。"
+    },
+    {
+      "id": "wounded",
+      "needs": {
+        "health": [
+          0,
+          40
+        ]
+      },
+      "text": "伤口又在渗血，动作稍大就扯得疼。"
+    },
+    {
+      "id": "idle",
+      "needs": {
+        "_idleHours": [
+          4,
+          9999
+        ]
+      },
+      "text": "手头的事搁了很久，一直没动。"
+    }
+  ]
+}

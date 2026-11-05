@@ -7,15 +7,12 @@
         },
         "reasoning_effort": "high",
         "max_tokens": 16384,
-        "response_format": {
-            "type": "json_object"
-        },
-        "stream ": false,
+        "stream": false,
         "api": "sk-你的key",
         "stream_options": {
             "include_usage": false
         },
-        "temperature": 1.5,
+        "temperature": 0.9,
         "top_p": 1,
         "tool_choice": "auto",
         "logprobs": false,
@@ -25,23 +22,6 @@
     },
     "harness": {
         "name": "涟·梦露",
-        "prompt_type_order": [
-            "persona",
-            "agent",
-            "character",
-            "memory_persistent",
-            "lorebook_persistent",
-            "user",
-            "skill_proficient",
-            "session",
-            "memory_momentary",
-            "lorebook_momentary",
-            "skill_knowledge",
-            "state",
-            "last_message",
-            "plan",
-            "只做参考，不涉及具体上下文顺序设置"
-        ],
         "usage": {
             "maxTurn": 100
         },
@@ -52,8 +32,58 @@
         "subprocess": {
             "timeout": 300
         },
+        "loop": {
+            "maxRounds": 8,
+            "maxToolOutput": 8000
+        },
+        "retrieval": {
+            "queryTurns": {
+                "withMessage": 2,
+                "loopRound": 3,
+                "maxChars": 400
+            },
+            "memory": {
+                "topK": 6,
+                "blockTopK": 3,
+                "sliceFloor": 0.55,
+                "sliceMargin": 0.08,
+                "blockFloor": 0.4
+            },
+            "lorebook": {
+                "maxItems": 12,
+                "budgetChars": 2000
+            }
+        },
+        "plan": {
+            "stepWindow": 1,
+            "activeLimit": 3,
+            "pausedLimit": 2
+        },
+        "network": {
+            "verifySSL": false
+        },
         "debug": {
+            "dump": false,
             "dumpTail": true
+        },
+        "dream": {
+            "block": {
+                "minRecalledChars": 5000,
+                "minRecalls": 5
+            },
+            "memory": {
+                "minRecalls": 30,
+                "minSources": 2
+            },
+            "persona": {
+                "minEvents": 3
+            },
+            "maxTokens": 3000
+        }
+    },
+    "tools": {
+        "tavily": {
+            "api": ""
         }
     }
 }

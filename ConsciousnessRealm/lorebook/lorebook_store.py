@@ -2,23 +2,14 @@
 
 ## 这一层在 prompt 里的位置
 
-state/Philosophical.json 的 harness.prompt_type_order：
+本模块只负责 `lorebook_momentary`：session 之后、按 `keys` 匹配后注入的具体设定。
+整段常驻的世界常识在 `ConsciousnessRealm/LOREBOOK.md`（`lorebook_persistent`）。
+paragraph 顺序的权威定义见 `ConsciousnessRealm/AGENT.md`，本文件不读任何配置。
 
-    persona → system → character → memory_persistent → lorebook_persistent
-    → skill_proficient ‖ session ‖ memory_momentary → lorebook_momentary
-    → skill_lorebook → state → user_message → plan
-
-知识分两段：
-
-- **lorebook.md** → `lorebook_persistent`（session 之前，system 级）：世界常识，
-  人人皆知、不需要检索，整段常驻。
-- **lorebook.json**（本文件）→ `lorebook_momentary`（session 之后）：具体地名/组织的
-  设定细节，按 keys 匹配后注入，优先级低于会话内容。
-
-所以判据很硬：**凡是不容被会话内容盖过的，别放 JSON**。
-- 世界基础常识 → lorebook.md
-- 角色人格与三观 → persona.md（第 1 位）
-- 角色身份、数据、用语 → character.md（第 3 位）
+判据：**凡是不容被会话内容盖过的，别放这里的 JSON。**
+- 世界基础常识 → `LOREBOOK.md`
+- 角色人格与三观 → `PERSONA.md`
+- 角色身份、数据、用语 → `CHARACTER.md`
 - 具体设定细节 → 本文件
 
 ## 数据格式 lorebook.json
@@ -222,7 +213,7 @@ def store() -> LorebookStore:
 
 
 def lookup(text: str, **kwargs) -> list[dict]:
-    """按 mention 查世界书。命中的条目注入 skill_lorebook 段。"""
+    """按 mention 查世界书。命中的条目注入 lorebook_momentary 段。"""
     return store().lookup(text, **kwargs)
 
 
@@ -272,4 +263,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

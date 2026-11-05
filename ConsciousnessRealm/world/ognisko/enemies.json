@@ -1,0 +1,481 @@
+{
+  "_doc": "四阶敌人：1 轻松，2 状态好时轻松，3 需要治疗，4 需要治疗+暴击。",
+  "enemies": [
+    {
+      "id": "hare",
+      "name": "荒原兔",
+      "category": "wild",
+      "attributes": {
+        "hp": 60,
+        "atk": 25,
+        "def": 4,
+        "res": 0,
+        "speed": 40
+      },
+      "tier": 1
+    },
+    {
+      "id": "boar",
+      "name": "獠牙野猪",
+      "category": "wild",
+      "attributes": {
+        "hp": 220,
+        "atk": 78,
+        "def": 18,
+        "res": 5,
+        "speed": 34
+      },
+      "skills": [
+        {
+          "id": "charge",
+          "name": "冲撞",
+          "type": "attack",
+          "power": 1.5,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "hound",
+      "name": "群猎犬",
+      "category": "wild",
+      "attributes": {
+        "hp": 170,
+        "atk": 86,
+        "def": 10,
+        "res": 0,
+        "speed": 62
+      },
+      "skills": [
+        {
+          "id": "bite",
+          "name": "撕咬",
+          "type": "attack",
+          "power": 1.3,
+          "cost": 2,
+          "cooldown": 1
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "lizard",
+      "name": "岩壳蜥",
+      "category": "wild",
+      "attributes": {
+        "hp": 260,
+        "atk": 70,
+        "def": 34,
+        "res": 10,
+        "speed": 28
+      },
+      "skills": [
+        {
+          "id": "tail",
+          "name": "甩尾",
+          "type": "attack",
+          "power": 1.4,
+          "cost": 4,
+          "cooldown": 3
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "crystal_crawler",
+      "name": "结晶爬行者",
+      "category": "infected",
+      "attributes": {
+        "hp": 150,
+        "atk": 72,
+        "def": 16,
+        "res": 20,
+        "speed": 44
+      },
+      "skills": [
+        {
+          "id": "shard",
+          "name": "晶刺",
+          "type": "attack",
+          "power": 1.4,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "originium_swarm",
+      "name": "源石虫群",
+      "category": "infected",
+      "attributes": {
+        "hp": 120,
+        "atk": 58,
+        "def": 6,
+        "res": 25,
+        "speed": 70
+      },
+      "skills": [
+        {
+          "id": "swarm",
+          "name": "啃噬",
+          "type": "attack",
+          "power": 1.2,
+          "cost": 1,
+          "cooldown": 1
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "bloated_beast",
+      "name": "溃烂巨兽",
+      "category": "infected",
+      "attributes": {
+        "hp": 340,
+        "atk": 96,
+        "def": 22,
+        "res": 15,
+        "speed": 22
+      },
+      "skills": [
+        {
+          "id": "slam",
+          "name": "碾压",
+          "type": "attack",
+          "power": 1.7,
+          "cost": 5,
+          "cooldown": 3
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "wandering_spell",
+      "name": "游荡术式",
+      "category": "construct",
+      "attributes": {
+        "hp": 130,
+        "atk": 88,
+        "def": 8,
+        "res": 45,
+        "speed": 56
+      },
+      "skills": [
+        {
+          "id": "arc",
+          "name": "电弧",
+          "type": "attack",
+          "power": 1.5,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "echo_puppet",
+      "name": "残响傀儡",
+      "category": "construct",
+      "attributes": {
+        "hp": 200,
+        "atk": 80,
+        "def": 20,
+        "res": 35,
+        "speed": 40
+      },
+      "skills": [
+        {
+          "id": "echo",
+          "name": "回响",
+          "type": "attack",
+          "power": 1.6,
+          "cost": 4,
+          "cooldown": 3
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "mirror_shade",
+      "name": "镜影",
+      "category": "construct",
+      "attributes": {
+        "hp": 160,
+        "atk": 92,
+        "def": 14,
+        "res": 40,
+        "speed": 64
+      },
+      "skills": [
+        {
+          "id": "mirror",
+          "name": "映照",
+          "type": "attack",
+          "power": 1.45,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "soldier",
+      "name": "士兵",
+      "category": "soldier",
+      "attributes": {
+        "hp": 95,
+        "atk": 46,
+        "def": 12,
+        "res": 0,
+        "speed": 45
+      },
+      "tier": 1
+    },
+    {
+      "id": "airborne",
+      "name": "空降兵",
+      "category": "soldier",
+      "attributes": {
+        "hp": 85,
+        "atk": 50,
+        "def": 10,
+        "res": 0,
+        "speed": 56
+      },
+      "tier": 1
+    },
+    {
+      "id": "airborne_leader",
+      "name": "空降组长",
+      "category": "soldier",
+      "attributes": {
+        "hp": 115,
+        "atk": 60,
+        "def": 12,
+        "res": 0,
+        "speed": 58
+      },
+      "skills": [
+        {
+          "id": "drop",
+          "name": "突降斩",
+          "type": "attack",
+          "power": 1.5,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "crossbow",
+      "name": "弩手",
+      "category": "soldier",
+      "attributes": {
+        "hp": 70,
+        "atk": 54,
+        "def": 8,
+        "res": 5,
+        "speed": 50
+      },
+      "skills": [
+        {
+          "id": "volley",
+          "name": "齐射",
+          "type": "attack",
+          "power": 1.3,
+          "cost": 2,
+          "cooldown": 2
+        }
+      ],
+      "tier": 1
+    },
+    {
+      "id": "crossbow_leader",
+      "name": "弩手组长",
+      "category": "soldier",
+      "attributes": {
+        "hp": 98,
+        "atk": 68,
+        "def": 10,
+        "res": 8,
+        "speed": 52
+      },
+      "skills": [
+        {
+          "id": "volley",
+          "name": "齐射",
+          "type": "attack",
+          "power": 1.45,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "caster",
+      "name": "术师",
+      "category": "soldier",
+      "attributes": {
+        "hp": 66,
+        "atk": 62,
+        "def": 6,
+        "res": 30,
+        "speed": 46
+      },
+      "skills": [
+        {
+          "id": "bolt",
+          "name": "法术弹",
+          "type": "attack",
+          "power": 1.35,
+          "cost": 2,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "caster_leader",
+      "name": "术师组长",
+      "category": "soldier",
+      "attributes": {
+        "hp": 88,
+        "atk": 74,
+        "def": 8,
+        "res": 32,
+        "speed": 48
+      },
+      "skills": [
+        {
+          "id": "bolt",
+          "name": "法术弹",
+          "type": "attack",
+          "power": 1.5,
+          "cost": 3,
+          "cooldown": 2
+        }
+      ],
+      "tier": 2
+    },
+    {
+      "id": "elite_caster",
+      "name": "高阶术师",
+      "category": "soldier",
+      "attributes": {
+        "hp": 150,
+        "atk": 86,
+        "def": 14,
+        "res": 40,
+        "speed": 44
+      },
+      "skills": [
+        {
+          "id": "splash",
+          "name": "溅射术式",
+          "type": "attack",
+          "power": 1.6,
+          "cost": 4,
+          "cooldown": 3
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "elite_caster_leader",
+      "name": "高阶术师组长",
+      "category": "soldier",
+      "attributes": {
+        "hp": 195,
+        "atk": 98,
+        "def": 16,
+        "res": 42,
+        "speed": 46
+      },
+      "skills": [
+        {
+          "id": "splash",
+          "name": "溅射术式",
+          "type": "attack",
+          "power": 1.8,
+          "cost": 5,
+          "cooldown": 3
+        }
+      ],
+      "tier": 3
+    },
+    {
+      "id": "grudge_caster",
+      "name": "积怨术师",
+      "category": "soldier",
+      "tier": 4,
+      "attributes": {
+        "hp": 356,
+        "atk": 96,
+        "def": 22,
+        "res": 48,
+        "speed": 50
+      },
+      "skills": [
+        {
+          "id": "hex",
+          "name": "怨术",
+          "type": "attack",
+          "power": 1.7,
+          "cost": 4,
+          "cooldown": 2
+        }
+      ]
+    },
+    {
+      "id": "veteran_knight",
+      "name": "历战骑士",
+      "category": "soldier",
+      "tier": 4,
+      "attributes": {
+        "hp": 382,
+        "atk": 94,
+        "def": 34,
+        "res": 20,
+        "speed": 56
+      },
+      "skills": [
+        {
+          "id": "cleave",
+          "name": "劈斩",
+          "type": "attack",
+          "power": 1.6,
+          "cost": 4,
+          "cooldown": 2
+        }
+      ]
+    },
+    {
+      "id": "ruin_construct",
+      "name": "残损造物",
+      "category": "construct",
+      "tier": 4,
+      "attributes": {
+        "hp": 368,
+        "atk": 98,
+        "def": 24,
+        "res": 45,
+        "speed": 60
+      },
+      "skills": [
+        {
+          "id": "collapse",
+          "name": "崩解术式",
+          "type": "attack",
+          "power": 1.75,
+          "cost": 5,
+          "cooldown": 3
+        }
+      ]
+    }
+  ]
+}
