@@ -320,7 +320,7 @@ def session_history(limit=40):
 def usage_window():
     """平均命中的统计窗口，读 harness.usage.avgWindow，限制在 50~300。"""
     try:
-        value = int((core.harness.get("usage") or {}).get("avgWindow", 100))
+        value = int((core.harness.get("usage") or {}).get("maxTurn", 100))
     except (TypeError, ValueError):
         value = 100
     return max(50, min(300, value))

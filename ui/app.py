@@ -45,6 +45,10 @@ QLabel#h1 {{ font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#info {{ color: #a8a49c; font-size: 12px; }}
 QLabel#narration {{ color: #9d988f; }}
+QLabel#group {{ color: #000000; font-size: 12.5px; font-weight: 600;
+                letter-spacing: 1px; }}
+QLabel#fieldName {{ color: #000000; }}
+QLineEdit {{ color: #000000; }}
 QLabel#tipItem {{ color: #b3aea6; }}
 QLabel#stamp {{ color: #b3aea6; font-size: 10px; }}
 QLabel#clock {{ color: #FFC90E; font-size: 12px; padding: 0 14px;
@@ -844,6 +848,121 @@ class ChatPage(QWidget):
 
 # ---------------- 配置页 ----------------
 
+VISIBLE = {
+    "payload.api", "payload.max_tokens", "payload.stream",
+    "payload.temperature", "payload.user_id",
+    "harness.name", "harness.usage.maxTurn",
+    "harness.retrieval.queryTurns.withMessage",
+    "harness.retrieval.queryTurns.maxChars",
+    "harness.retrieval.memory.topK",
+    "harness.retrieval.memory.blockTopK",
+    "harness.retrieval.memory.sliceFloor",
+    "harness.retrieval.memory.sliceMargin",
+    "harness.retrieval.memory.blockFloor",
+    "harness.retrieval.lorebook.maxItems",
+    "harness.retrieval.lorebook.budgetChars",
+    "harness.dream.block.minRecalledChars",
+    "harness.dream.block.minRecalls",
+    "harness.dream.memory.minRecalls",
+    "harness.dream.memory.minSources",
+    "harness.dream.persona.minEvents",
+    "harness.dream.maxTokens",
+    "tools.tavily.api",
+}
+
+
+def visible(path):
+    return ".".join(path) in VISIBLE
+
+
+def has_visible(node, path):
+    """子树里有没有白名单字段，没有就整组隐藏。"""
+    for key, value in node.items():
+        if isinstance(value, dict):
+            if has_visible(value, path + (key,)):
+                return True
+        elif visible(path + (key,)):
+            return True
+    return False
+
+
+LABELS = {
+    "payload.model": "模型",
+    "payload.thinking.type": "思考开关",
+    "payload.reasoning_effort": "思考强度",
+    "payload.max_tokens": "输出上限",
+    "payload.stream": "默认流式",
+    "payload.api": "接口密钥",
+    "payload.stream_options.include_usage": "统计用量",
+    "payload.temperature": "温度",
+    "payload.top_p": "采样范围",
+    "payload.tool_choice": "工具选择",
+    "payload.logprobs": "返回概率",
+    "payload.top_logprobs": "概率条数",
+    "payload.user_id": "用户标识",
+    "harness.name": "角色名",
+    "harness.usage.maxTurn": "统计轮数",
+    "harness.usage.avgWindow": "平均命中窗口",
+    "harness.session.compressionThreshold": "压缩阈值",
+    "harness.session.retainedTrun": "保留轮次",
+    "harness.subprocess.timeout": "工具超时",
+    "harness.loop.maxRounds": "循环上限",
+    "harness.loop.maxToolOutput": "工具输出上限",
+    "harness.retrieval.queryTurns.withMessage": "检索轮次（对话）",
+    "harness.retrieval.queryTurns.loopRound": "检索轮次（循环）",
+    "harness.retrieval.queryTurns.maxChars": "检索字数上限",
+    "harness.retrieval.memory.topK": "记忆召回条数",
+    "harness.retrieval.memory.blockTopK": "记忆块条数",
+    "harness.retrieval.memory.sliceFloor": "切片阈值",
+    "harness.retrieval.memory.sliceMargin": "切片相对余量",
+    "harness.retrieval.memory.blockFloor": "块阈值",
+    "harness.retrieval.lorebook.maxItems": "世界书条数",
+    "harness.retrieval.lorebook.budgetChars": "世界书字数预算",
+    "harness.plan.stepWindow": "计划步长窗口",
+    "harness.plan.activeLimit": "进行中上限",
+    "harness.plan.pausedLimit": "暂停上限",
+    "harness.network.verifySSL": "校验证书",
+    "harness.debug.dump": "调试快照",
+    "harness.debug.dumpTail": "快照尾部",
+    "harness.dream.block.minRecalledChars": "沉淀字符下限",
+    "harness.dream.block.minRecalls": "沉淀召回次数",
+    "harness.dream.memory.minRecalls": "记忆召回次数",
+    "harness.dream.memory.minSources": "记忆来源数",
+    "harness.dream.persona.minEvents": "人格事件数",
+    "harness.dream.maxTokens": "升格输出上限",
+    "tools.tavily.api": "搜索密钥",
+}
+
+GROUPS = {
+    "payload": "模型请求",
+    "payload.thinking": "思考",
+    "payload.stream_options": "流式选项",
+    "harness": "运行参数",
+    "harness.usage": "用量",
+    "harness.session": "会话与压缩",
+    "harness.subprocess": "子进程",
+    "harness.loop": "工具循环",
+    "harness.retrieval": "向量召回",
+    "harness.retrieval.queryTurns": "检索轮次",
+    "harness.retrieval.memory": "记忆",
+    "harness.retrieval.lorebook": "世界书",
+    "harness.plan": "计划",
+    "harness.network": "网络",
+    "harness.debug": "调试",
+    "harness.dream": "人格维护",
+    "harness.dream.block": "切片 → 记忆向量",
+    "harness.dream.memory": "记忆向量 → 常驻记忆",
+    "harness.dream.persona": "常驻记忆 → 人格准则",
+    "tools": "外部工具",
+    "tools.tavily": "Tavily 搜索",
+}
+
+
+def zh(path, table, fallback):
+    key = ".".join(path)
+    return table.get(key, fallback)
+
+
 class ConfigPage(QWidget):
     """把 state/Philosophical.json 整棵树铺成表单。"""
 
@@ -894,9 +1013,7 @@ class ConfigPage(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         for section, values in cfg.items():
-            if section in ("messages", "tools"):
-                continue
-            if not isinstance(values, dict):
+            if not isinstance(values, dict) or not has_visible(values, (section,)):
                 continue
             self.form.insertWidget(self.form.count() - 1, self._section(section, values))
         self.hint.setText("来自 state/Philosophical.json")
@@ -915,29 +1032,60 @@ class ConfigPage(QWidget):
         self._rows(box, values, (name,))
         return card
 
-    def _rows(self, box, values, path):
+    def _rows(self, box, values, path, depth=0):
         for key, value in values.items():
             if key in ("messages", "tools"):
                 continue
+
             if isinstance(value, dict):
-                label = QLabel(key)
-                label.setObjectName("muted")
-                box.addWidget(label)
-                self._rows(box, value, path + (key,))
+                if not has_visible(value, path + (key,)):
+                    continue
+                group = QWidget()
+                group_layout = QVBoxLayout(group)
+                group_layout.setContentsMargins(14 * depth, 10 if depth else 14, 0, 0)
+                group_layout.setSpacing(4)
+
+                head = QHBoxLayout()
+                head.setContentsMargins(0, 0, 0, 0)
+                marker = QFrame()
+                marker.setFixedWidth(2)
+                marker.setStyleSheet("background: #d8d5cf;")
+                head.addWidget(marker)
+                head.addSpacing(8)
+                name = QLabel(zh(path + (key,), GROUPS, key))
+                name.setObjectName("group")
+                head.addWidget(name)
+                head.addStretch(1)
+                group_layout.addLayout(head)
+                group_layout.addSpacing(2)
+
+                self._rows(group_layout, value, path + (key,), depth + 1)
+                box.addWidget(group)
+                box.addSpacing(6)
                 continue
-            row = QHBoxLayout()
-            name = QLabel(key)
-            name.setFixedWidth(190)
-            name.setObjectName("muted")
-            row.addWidget(name)
+
+            if not visible(path + (key,)):
+                continue
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(14 * depth + 10, 0, 0, 0)
+            row_layout.setSpacing(10)
+
+            name = QLabel(zh(path + (key,), LABELS, key))
+            name.setFixedWidth(180)
+            name.setObjectName("fieldName")
+            row_layout.addWidget(name)
 
             if isinstance(value, bool):
                 editor = QCheckBox()
                 editor.setChecked(value)
             else:
                 editor = QLineEdit(str(value))
-            row.addWidget(editor, 1)
-            box.addLayout(row)
+            editor.setMaximumWidth(520)
+            row_layout.addWidget(editor, 1)
+            row_layout.addStretch(1)
+            box.addWidget(row)
+            box.addSpacing(3)
             self.editors[path + (key,)] = (editor, type(value))
 
     # ---- 保存 ----
