@@ -249,17 +249,17 @@ def judge(description, ch=None, force=False):
     duration = max(0, min(MAX_MINUTES, duration))
 
     # 几秒内做完的事不占身：直接生效，不建计时器
-    # 地图外：没有具体位置，行路时间按 30~90 分钟抽一个数
-    world = load_world()
-    known = {p.get("path") for p in world.get("places") or []} if world else set()
-    if location and known and all(location not in k and not location.endswith(k) for k in known):
-        duration = max(duration, random.randint(30, 90))
-
     instant = duration * 60 <= timers.INSTANT_SECONDS
     slot = "instant" if instant else "body"
     slot_id = timers.slot_id_for()
 
     location = str(data.get("location") or "").strip()
+
+    # 地图外：没有具体位置，行路时间按 30~90 分钟抽一个数
+    world = load_world()
+    known = {p.get("path") for p in world.get("places") or []} if world else set()
+    if location and known and all(location not in k and not location.endswith(k) for k in known):
+        duration = max(duration, random.randint(30, 90))
     text = str(data.get("text") or "").strip()
 
     if allow and not force and not instant:
@@ -296,7 +296,8 @@ def commit(description, slot="short", *, ch=None, force=False):
         return {"ok": False, "reason": "判定失败：body 没有返回可解析的结果", "degraded": True}
 
     if not verdict["allow"]:
-        return {"ok": False, "allow": False,
+        return {"未执行": "这动作没记下，她做不到",
+                "ok": False, "allow": False,
                 "reason": verdict["reason"] or "身体条件不允许"}
 
     if not verdict["text"]:
@@ -309,7 +310,8 @@ def commit(description, slot="short", *, ch=None, force=False):
             reward=verdict["reward"],
             location=verdict["location"],
         )
-        return {"ok": True, "allow": True, "instant": True, "slot": "none",
+        return {"已执行": f"已记下：{description}（瞬间完成）",
+                "ok": True, "allow": True, "instant": True, "slot": "none",
                 "applied": applied.get("applied") or {},
                 "location": applied.get("location") or None,
                 "text": verdict["text"]}
@@ -335,6 +337,7 @@ def commit(description, slot="short", *, ch=None, force=False):
 
     ends = time.strftime("%H:%M", time.localtime(float(entry["at"])))
     return {
+        "已执行": f"已记下：{description}（{verdict['duration']} 分钟后完成，{ends}）",
         "ok": True,
         "allow": True,
         "slot": verdict["slot"],

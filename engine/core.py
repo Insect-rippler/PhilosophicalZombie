@@ -827,8 +827,11 @@ def append_session(messages, path=SESSION_PATH):
         return 0
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(path, "a", encoding="utf-8") as f:
         for m in messages:
+            if "ts" not in m:
+                m = {**m, "ts": stamp}
             f.write(json.dumps(m, ensure_ascii=False) + "\n")
     if event_hooks is not None:
         try:
