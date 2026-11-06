@@ -21,6 +21,7 @@ def main():
     except json.JSONDecodeError:
         data = {}
     text = str(data.get("description") or "").strip()
+    text = text.encode("utf-8", "replace").decode("utf-8")   # 模型偶发输出代理字符
     if not text:
         print(json.dumps({"未记录": "场景描述为空"}, ensure_ascii=False))
         return

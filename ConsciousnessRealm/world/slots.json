@@ -9,6 +9,13 @@
       "description": "占身的事：移动、做饭、洗澡、练剑、睡觉。同一时刻只能有一件。"
     },
     {
+      "id": "event",
+      "kind": "action",
+      "capacity": 1,
+      "label": "事件",
+      "description": "大块的事：打一天铁、出趟远门、睡一觉。一件占满事件槽，做完再唤醒。"
+    },
+    {
       "id": "event.random",
       "kind": "event",
       "capacity": 1,

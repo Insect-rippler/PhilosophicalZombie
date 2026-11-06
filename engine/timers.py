@@ -145,8 +145,8 @@ INSTANT_SECONDS = 30        # 这个时长以内、且不移动的动作，不�
 
 
 def slot_id_for(slot=None):
-    """动作只有一个槽位：身体。slot 参数保留是为了兼容旧调用。"""
-    return "active"
+    """事件槽放「大块的事」，其余都算身体槽。"""
+    return "event" if str(slot or "").strip() == "event" else "active"
 
 
 def occupancy(now=None):
@@ -327,6 +327,16 @@ MAINTAIN_AFTER_HOURS = 3      # 睡着超过这么久，就该跑一次维护
 MAINTENANCE = ROOT / "state" / "realTime" / "maintenance.json"          # 一次结算最多补 12 小时，再长就当睡过去了
 
 
+def night_factor(now=None):
+    """夜里更容易困：22 点到 6 点翻倍，傍晚次之。"""
+    hour = time.localtime(time.time() if now is None else float(now)).tm_hour
+    if hour >= 22 or hour < 6:
+        return 2.2, 1.3          # 困意倍数、疲劳倍数
+    if hour >= 18:
+        return 1.5, 1.1
+    return 1.0, 1.0
+
+
 def advance(now=None):
     """按距上次结算的真实时间推进生理。返回 (小时数, 变化摘要)。"""
     now = time.time() if now is None else float(now)
@@ -338,7 +348,11 @@ def advance(now=None):
     hours = min(hours, MAX_GAP_HOURS)
 
     sleeping = (ch.get("state") or {}).get("active") == "sleep"
-    rates = RATES["sleep" if sleeping else "awake"]
+    rates = dict(RATES["sleep" if sleeping else "awake"])
+    if not sleeping:                       # 夜里更容易困、更累
+        sleep_mul, fatigue_mul = night_factor(now)
+        rates["sleepiness"] = rates.get("sleepiness", 0) * sleep_mul
+        rates["fatigue"] = rates.get("fatigue", 0) * fatigue_mul
     metab = ch.setdefault("metabolism", {})
     applied = {}
     for key, rate in rates.items():
@@ -464,6 +478,13 @@ def render_state(ch=None, pending="", now=None):
     local = str(ch.get("local") or "").strip()
     if local:
         lines.append(f"你在{local}。")
+
+    busy = [t for t in load_timers()
+            if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
+    if busy:
+        doing = str(busy[0].get("semantic") or busy[0].get("text") or "").strip()
+        left = max(1, int((float(busy[0]["at"]) - moment) // 60) + 1)
+        lines.append(f"手上的事：{doing}，约 {left} 分钟后结束。")
 
     state = ch.get("state") or {}
     if state.get("active") == "sleep":

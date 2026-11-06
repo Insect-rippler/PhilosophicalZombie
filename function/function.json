@@ -4,7 +4,7 @@
             "type": "function",
             "name": "active",
             "path": "",
-            "description": "声明她此刻正在做的一件需要时间的事。body 会判定做不做得成、要花多久、做完在哪、有什么变化。只需在她真的动手做一件事时调用；纯聊天、回答问题不要调。要打断手上正在做的事改做别的，把 force 设为 true。",
+            "description": "声明她正在做的一件事。description 说清做什么、对什么、在哪儿。时长由 body 判定。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -12,17 +12,18 @@
                         "type": "string",
                         "description": "她在做什么，第三人称一句话，例如「她走进厨房烧水煮面」。"
                     },
+                    "force": {
+                        "type": "boolean",
+                        "description": "true = 打断她手上正在做的事，改做这件。只在确实要中断时用（例如突然有事必须离开）；平时不要传。"
+                    },
                     "slot": {
                         "type": "string",
                         "enum": [
                             "short",
-                            "long"
+                            "long",
+                            "event"
                         ],
-                        "description": "只是建议，body 会按时长自己决定用哪个槽位。"
-                    },
-                    "force": {
-                        "type": "boolean",
-                        "description": "true = 打断她手上正在做的事，改做这件。只在确实要中断时用（例如突然有事必须离开）；平时不要传。"
+                        "description": "short：一下就能做完的小动作。long：要花一阵、但仍然是你亲自做的事。event：中间不需要你做决定的连续劳动（打一件铁、烧一炉砖、守夜到天亮）；这类事一次交出去，过程不给画面，到点叫你"
                     }
                 },
                 "required": [
@@ -527,7 +528,7 @@
             "type": "function",
             "name": "plan",
             "path": "function/plan/plan.py",
-            "description": "管理她自己的目标。只在确立、推进或放弃一件要花一段时间的事时调用；日常琐事不要记成目标。",
+            "description": "记录并推进她想做的事。只要是跨不止一轮的打算，都记在这里：今天要做什么、做到哪一步、卡在哪。做完或放弃就更新状态。",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -138,12 +138,14 @@ def run_with_tools(payload, emit):
     urllib3.disable_warnings()
 
     last_text = ""
+    echo = EchoStrip()
     rounds = max(1, int(core.LOOP_MAX))       # 上限统一读 harness.loop.maxRounds
     for _round in range(rounds):
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
         calls, content_parts, usage = [], [], None
         reasoning_parts = []
+        salvage = Salvager()
         try:
             with requests.post(
                 core.chat_completions_url,
@@ -189,9 +191,23 @@ def run_with_tools(payload, emit):
                         piece = delta.get("content")
                         if piece:
                             content_parts.append(piece)
-                            emit("delta", piece)
+                            visible, events = salvage.feed(piece)
+                            visible = echo.feed(visible)
+                            if visible:
+                                emit("delta", visible)
+                            for event in events:
+                                emit("tool", event)
         except Exception:                    # noqa: BLE001
             return False, ""
+
+        rest = echo.close()
+        if rest.strip():
+            emit("delta", rest)
+        tail, tail_events = salvage.flush()
+        if tail.strip():
+            emit("delta", tail)
+        for event in tail_events:
+            emit("tool", event)
 
         if usage:
             try:
@@ -208,6 +224,7 @@ def run_with_tools(payload, emit):
                 pass
 
         last_text = "".join(content_parts)
+        echo.remember(last_text)
         if not calls:
             run_with_tools.reasoning = "".join(reasoning_parts)
             return True, last_text
@@ -367,6 +384,112 @@ def last_usage():
                            / max(1, core.COMPRESSION_THRESHOLD), 2)}
 
 
+# ---------------- 脏输出兜底 ----------------
+
+import re as _re
+
+TAG_ACTION = _re.compile(r"<\s*(active|scene)([^>]*)>", _re.S)
+ATTR_DESC = _re.compile(r'description\s*=\s*["\']([^"\']*)["\']', _re.S)
+DSML_CALL = _re.compile(r'invoke\s+name\s*=\s*["\'](active|scene)["\']', _re.S)
+DSML_PARAM = _re.compile(r'parameter\s+name\s*=\s*["\']description["\'][^>]*>([^<]*)', _re.S)
+NOISE = _re.compile(r"<[^>]*DSML[^>]*>|</\s*(active|scene)\s*>|<\s*\|\|?[^>]*>", _re.S)
+
+
+class Salvager:
+    """把模型写成文本的工具调用捡回来，剩下的标记丢掉。
+
+    逐段喂 delta：正常文本立即返回，疑似标签先扣住，闭合后再判定。
+    返回 (可展示文本, 事件列表)。
+    """
+
+    def __init__(self):
+        self.hold = ""
+
+    def feed(self, piece):
+        text, events = "", []
+        self.hold += piece
+        while self.hold:
+            start = self.hold.find("<")
+            if start < 0:
+                text += self.hold
+                self.hold = ""
+                break
+            text += self.hold[:start]
+            rest = self.hold[start:]
+            end = rest.find(">")
+            if end < 0:
+                if len(rest) > 400:            # 不像标签，当普通文字放出去
+                    text += rest
+                    self.hold = ""
+                else:
+                    self.hold = rest
+                break
+            chunk = rest[:end + 1]
+            self.hold = rest[end + 1:]
+            events.extend(self._inspect(chunk, text_holder := []))
+            # _inspect 只处理标签本身；description 可能在后面的正文里
+
+        # 兜底：DSML 形式的调用
+        for match in list(DSML_CALL.finditer(self.hold)):
+            events.append({"kind": "narration", "name": match.group(1), "text": ""})
+        return text, events
+
+    def _inspect(self, chunk, _unused):
+        found = []
+        tag = TAG_ACTION.match(chunk)
+        if tag:
+            name = tag.group(1)
+            attrs = tag.group(2) or ""
+            desc = ATTR_DESC.search(attrs)
+            found.append({"kind": "narration", "name": name,
+                          "text": desc.group(1) if desc else ""})
+            return found
+        return found
+
+    def flush(self):
+        """回合结束，把还扣着的东西处理掉。"""
+        rest, self.hold = self.hold, ""
+        text, events = "", []
+        if not rest:
+            return text, events
+        for match in DSML_CALL.finditer(rest):
+            desc = DSML_PARAM.search(rest)
+            events.append({"kind": "narration", "name": match.group(1),
+                           "text": desc.group(1).strip() if desc else ""})
+        text = NOISE.sub("", rest)
+        text = TAG_ACTION.sub("", text).strip()
+        if events and text:                    # 描述常跟在标签后面
+            events[-1]["text"] = (events[-1]["text"] + " " + text).strip()
+            text = ""
+        return text, events
+
+
+class EchoStrip:
+    """模型有时把上一轮的台词当前缀重写一遍；把它剥掉再输出。"""
+
+    def __init__(self):
+        self.prev = ""
+        self.buf = ""
+
+    def feed(self, piece):
+        self.buf += piece
+        if self.prev:
+            if len(self.buf) <= len(self.prev) and self.prev.startswith(self.buf):
+                return ""                      # 还在复述上一轮，压住不发
+            if self.buf.startswith(self.prev):
+                rest, self.buf, self.prev = self.buf[len(self.prev):], "", ""
+                return rest
+        out, self.buf, self.prev = self.buf, "", ""
+        return out
+
+    def close(self):
+        """一轮结束：返回结尾残留，并把这一轮的话记为上一轮。"""
+        rest, self.buf = self.buf, ""
+        return rest
+
+    def remember(self, text):
+        self.prev = (text or "").strip()
+
 def skill_text():
     """把 skill.json 渲染成可读文本。"""
     target = core.REALM_ROOT / "skill" / "skill.json"
@@ -420,17 +543,7 @@ def last_activity_at():
 
 
 def idle_tick():
-    """静默超过阈值时，让她自己醒来走一轮。调用方需持有 LOCK。"""
-    enabled, minutes = idle_settings()
-    if not enabled:
-        return 0
-    last = last_activity_at()
-    if not last:
-        return 0
-    import time as _time
-    if _time.time() - last < minutes * TICK_SECONDS:
-        return 0
-
+    """醒来走一轮。调用方负责判断该不该醒。"""
     payload = core.context_assemble()
     chunks = []
     run_with_tools(payload, lambda kind, value: chunks.append(value)
@@ -655,15 +768,33 @@ def idle_loop():
     import time as _time
     while True:
         _time.sleep(TICK_SECONDS)
-        if LOCK.acquire(blocking=False):
-            try:
-                if idle_tick():
-                    print("[idle] 自己醒了一轮", flush=True)
-            except Exception:                # noqa: BLE001
-                import traceback
-                traceback.print_exc()
-            finally:
-                LOCK.release()
+        if not LOCK.acquire(blocking=False):
+            continue
+        try:
+            # 计时 / 生理 / 事件：只追加
+            timers.advance()
+            timers.settle()
+            for hook in (getattr(core, "reminder_hooks", None),
+                         getattr(core, "event_hooks", None)):
+                if hook is not None:
+                    try:
+                        hook.check()
+                    except Exception:            # noqa: BLE001
+                        pass
+
+            pending = timers.peek_pending()
+            enabled, minutes = idle_settings()
+            last = last_activity_at()
+            quiet = (enabled and last and
+                     _time.time() - last >= minutes * TICK_SECONDS)
+            if pending or quiet:
+                print("[wake]", "事件/计时" if pending else "静默", flush=True)
+                idle_tick()
+        except Exception:                        # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+        finally:
+            LOCK.release()
 
 
 def main():
