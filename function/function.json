@@ -572,6 +572,23 @@
                     "action"
                 ]
             }
+        },
+        {
+            "name": "scene",
+            "path": "function/scene/scene.py",
+            "description": "交代场景：光线、声音、天气、气味、旁人的动作与位置变化。正文只写她说的台词，动作走 active，环境一律走这里。只有画面真的变了才调用，不必每轮都写。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "客观描述此刻环境发生了什么变化，一到两句"
+                    }
+                },
+                "required": [
+                    "description"
+                ]
+            }
         }
     ]
 }
