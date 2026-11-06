@@ -315,8 +315,10 @@ class Bubble(QFrame):
             font.setItalic(True)
             font.setPointSizeF(max(9.0, font.pointSizeF() - 0.5))
             label.setFont(font)
-            label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-            label.setMaximumWidth(1520)
+            label.ensurePolished()
+            metrics = QFontMetrics(label.font())
+            natural = metrics.horizontalAdvance(str(text)) + 44
+            label.setFixedWidth(min(1520, max(180, natural)))
             layout.setContentsMargins(0, 2, 0, 2)
             row = QHBoxLayout()
             row.addStretch(1)
