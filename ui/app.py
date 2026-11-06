@@ -44,7 +44,8 @@ QWidget {{ background: transparent; color: #23211e; font-size: 13.5px; }}
 QLabel#h1 {{ font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#info {{ color: #a8a49c; font-size: 12px; }}
-QLabel#narration {{ color: #9d988f; }}
+QLabel#narration {{ color: #FFC90E; background: rgba(35,33,30,0.58);
+                    padding: 4px 12px; border-radius: 8px; }}
 QLabel#group {{ color: #000000; font-size: 12.5px; font-weight: 600;
                 letter-spacing: 1px; }}
 QLabel#fieldName {{ color: #000000; }}
@@ -299,7 +300,7 @@ class Bubble(QFrame):
         super().__init__()
         self.role = role
         self.bodies = []
-        self.setStyleSheet("QFrame { background: transparent; border: none; }")
+        self.setStyleSheet("QFrame#msgCard { background: transparent; border: none; }")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -314,8 +315,14 @@ class Bubble(QFrame):
             font.setItalic(True)
             font.setPointSizeF(max(9.0, font.pointSizeF() - 0.5))
             label.setFont(font)
+            label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+            label.setMaximumWidth(1520)
             layout.setContentsMargins(0, 2, 0, 2)
-            layout.addWidget(label)
+            row = QHBoxLayout()
+            row.addStretch(1)
+            row.addWidget(label)
+            row.addStretch(1)
+            layout.addLayout(row)
             return
 
         if role == "tip":
