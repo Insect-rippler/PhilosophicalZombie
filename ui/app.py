@@ -1153,6 +1153,10 @@ class ConfigPage(QWidget):
                 node = node.setdefault(part, {})
             node[path[-1]] = value
 
+        turns = (config.get("harness") or {}).get("retrieval", {}).get("queryTurns")
+        if isinstance(turns, dict) and isinstance(turns.get("withMessage"), int):
+            turns["loopRound"] = turns["withMessage"] + 1      # 循环轮次 = 对话轮次 + 1
+
         try:
             api_send("POST", "/config", {"config": config})
             self.hint.setText("已保存")

@@ -431,6 +431,36 @@ def render_state(ch=None, pending="", now=None):
     ch = ch if isinstance(ch, dict) else load_character()
     lines = [f"现在是 {clock_text(now)}。"]
 
+    moment = time.time() if now is None else float(now)
+    last_action = ch.get("state", {}).get("lastActionAt")
+    if not isinstance(last_action, (int, float)):
+        last_action = 0
+    for entry in reversed(load_timers()):
+        stamp = entry.get("createdAt") or entry.get("at")
+        if isinstance(stamp, (int, float)) and stamp <= moment:
+            last_action = max(last_action, float(stamp))
+            break
+    if not last_action:                       # 没有计时器时，回看 session 最后一条
+        try:
+            path = Path(__file__).resolve().parents[1] / "state" / "session" / "session.jsonl"
+            for raw in reversed(path.read_text(encoding="utf-8").splitlines()[-40:]):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                item = json.loads(raw)
+                stamp = item.get("ts")
+                if item.get("role") == "assistant" and stamp:
+                    last_action = time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S"))
+                    break
+        except (OSError, ValueError, json.JSONDecodeError):
+            last_action = 0
+    if last_action:
+        span = max(0, int((moment - last_action) // 60))
+        if span >= 60:
+            lines.append(f"距离上一次行动已经过去 {span // 60} 小时 {span % 60} 分钟。")
+        else:
+            lines.append(f"距离上一次行动已经过去 {span} 分钟。")
+
     local = str(ch.get("local") or "").strip()
     if local:
         lines.append(f"你在{local}。")
