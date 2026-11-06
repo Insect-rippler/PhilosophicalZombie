@@ -50,3 +50,6 @@ desktop.ini
 .DS_Store
 state/file/
 state/realTime/
+
+# 美术素材（版权归原作，不进公开仓库）
+ui/assets/

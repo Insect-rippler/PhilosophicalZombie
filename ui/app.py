@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QPixmap
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
+                           QPixmap)
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QPlainTextEdit,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 BASE = os.environ.get("PZ_SERVER", "http://127.0.0.1:8765")
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
+BACKDROP_IMAGE = ASSET_DIR / "background.png"
 BUILD = "b1106-1"
 ACCENT = "#2f2f2f"
 PICKER_QSS = """
@@ -36,15 +39,19 @@ LINE = "#d8d5cf"
 MUTED = "#8a857c"
 
 QSS = f"""
-QWidget {{ background: {PAPER}; color: #23211e; font-size: 13.5px; }}
+QMainWindow, QDialog {{ background: {PAPER}; }}
+QWidget {{ background: transparent; color: #23211e; font-size: 13.5px; }}
 QLabel#h1 {{ font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#info {{ color: #a8a49c; font-size: 12px; }}
 QLabel#narration {{ color: #9d988f; }}
 QLabel#tipItem {{ color: #b3aea6; }}
 QLabel#stamp {{ color: #b3aea6; font-size: 10px; }}
-QLabel#clock {{ color: #9d988f; font-size: 12px; padding: 0 14px; }}
-QFrame#card {{ background: #ffffff; border: 1px solid {LINE}; border-radius: 6px; }}
+QLabel#clock {{ color: #FFC90E; font-size: 12px; padding: 0 14px;
+               background: rgba(35,33,30,0.55); border-radius: 9px; }}
+QLabel#usage {{ color: #FFC90E; font-size: 12px;
+               background: rgba(35,33,30,0.55); border-radius: 11px; }}
+QFrame#card {{ background: rgba(255,255,255,0.72); border: 1px solid {LINE}; border-radius: 6px; }}
 QFrame#bubbleUser {{ background: #ffffff; border: 1px solid {LINE};
                      border-top-right-radius: 10px; border-bottom-right-radius: 10px;
                      border-top-left-radius: 10px; border-bottom-left-radius: 3px; }}
@@ -56,10 +63,10 @@ QPushButton {{ border: 1px solid {LINE}; background: #ffffff; padding: 6px 16px;
 QPushButton:hover {{ border-color: {ACCENT}; }}
 QPushButton#nav {{ border: none; border-radius: 0; text-align: left;
                    padding: 9px 18px; background: transparent; color: {MUTED}; }}
-QPushButton#nav:checked {{ background: #ffffff; border-left: 2px solid {ACCENT};
+QPushButton#nav:checked {{ background: rgba(255,255,255,0.60); border-left: 2px solid {ACCENT};
                            color: #23211e; }}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox {{
-    border: 1px solid {LINE}; background: #ffffff; padding: 7px 9px; border-radius: 5px; }}
+    border: 1px solid {LINE}; background: rgba(255,255,255,0.62); padding: 7px 9px; border-radius: 5px; }}
 QLineEdit:focus, QPlainTextEdit:focus {{ border-color: {ACCENT}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
@@ -71,7 +78,7 @@ QListWidget::item:selected {{ background: #efece6; color: #23211e; }}
 QPushButton#tipHeader {{ border: none; background: transparent; color: #a8a49c;
                          padding: 2px 4px; text-align: left; font-size: 11px; }}
 QPushButton#tipHeader:hover {{ color: {ACCENT}; background: #efece6; }}
-QPushButton#picker {{ border: 1px solid {LINE}; padding: 5px 14px; background: #ffffff;
+QPushButton#picker {{ border: 1px solid {LINE}; padding: 5px 14px; background: rgba(255,255,255,0.62);
                       border-radius: 5px; color: {MUTED}; }}
 """
 
@@ -151,6 +158,47 @@ def api_send(method, path, data=None):
 LIMIT_CHARS = 90
 
 
+NO_LINE_START = set("，。、；：？！）〕】》」』〉”’…‥·ー～,.;:?!)]}%‰℃°％")
+NO_LINE_END = set("（〔【《「『〈“‘([{＄$￥")
+NO_BREAK_UNITS = set("年月日时分秒元角斤两米克吨度岁次天周号点%％")
+
+
+def _shift_break(block, cut):
+    """把折点往前挪，直到行首、行尾都不违反禁则。"""
+    if cut >= len(block):
+        return cut
+    while cut > 1:
+        nxt, prev = block[cut], block[cut - 1]
+        if nxt in NO_LINE_START or prev in NO_LINE_END:
+            cut -= 1
+            continue
+        # 数字与单位不拆开
+        if nxt in NO_BREAK_UNITS and prev.isdigit():
+            cut -= 1
+            continue
+        # 英文与数字不拆词
+        if prev.isascii() and nxt.isascii() and prev.isalnum() and nxt.isalnum():
+            cut -= 1
+            continue
+        break
+    return cut
+
+
+def wrap_to_px(text, fm, limit_px):
+    """按像素贪心折行，并做中文避头尾与数字/单位保护。"""
+    lines = []
+    for block in str(text).split("\n"):
+        block = block.strip()
+        while block:
+            cut = len(block)
+            while cut > 1 and fm.horizontalAdvance(block[:cut]) > limit_px:
+                cut -= 1
+            cut = _shift_break(block, cut)
+            lines.append(block[:cut])
+            block = block[cut:]
+    return "\n".join(lines)
+
+
 def wrap_chars(text, width=LIMIT_CHARS):
     """按字符数硬折行：每行不超过 width 个字。"""
     lines = []
@@ -161,6 +209,83 @@ def wrap_chars(text, width=LIMIT_CHARS):
         for i in range(0, len(block), width):
             lines.append(block[i:i + width])
     return "\n".join(lines)
+
+
+class Backdrop(QWidget):
+    """纸面装饰：从顶边垂下的藤蔓，像窗前的植物架。"""
+
+    INK = QColor("#d9d2c4")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.picture = QPixmap(str(BACKDROP_IMAGE)) if BACKDROP_IMAGE.exists() else QPixmap()
+
+    def _draw_picture(self, painter):
+        """背景图铺满窗口，压到很淡，当作纸面底画。"""
+        if self.picture.isNull():
+            return
+        scaled = self.picture.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
+                                     Qt.SmoothTransformation)
+        painter.save()
+        painter.setOpacity(0.64)
+        painter.drawPixmap((self.width() - scaled.width()) // 2,
+                           (self.height() - scaled.height()) // 2, scaled)
+        painter.restore()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor(PAPER))
+        self._draw_picture(painter)
+
+        painter.setPen(QPen(self.INK, 1.15))
+        painter.setBrush(Qt.NoBrush)
+
+        width, height = self.width(), self.height()
+        # 左边：两串，长短错开
+        self._hang(painter, 26, height * 0.52, 13, leaves=6)
+        self._hang(painter, 58, height * 0.30, -9, leaves=4)
+        # 右边：镜像，位置更靠上一点
+        self._hang(painter, width - 26, height * 0.44, -13, leaves=5)
+        self._hang(painter, width - 60, height * 0.24, 8, leaves=3)
+
+        painter.end()
+
+    def _hang(self, painter, x, length, sway, leaves=5):
+        """从顶边垂下来的一串：一条弯曲主茎，交错的叶子，末端一朵小花。"""
+        path = QPainterPath()
+        path.moveTo(x, 0)
+        spans = leaves + 1
+        for index in range(spans):
+            y1 = length * index / spans
+            y2 = length * (index + 1) / spans
+            offset = sway if index % 2 == 0 else -sway
+            path.cubicTo(x + offset, y1, x + offset, y2, x, y2)
+        painter.drawPath(path)
+
+        for index in range(1, spans):
+            y = length * index / spans
+            self._leaf(painter, x, y, 8 if index % 2 else -8, index)
+
+        self._flower(painter, x, length + 4, 6.5)
+
+    def _leaf(self, painter, x, y, direction, index):
+        size = 7 if index % 2 else 9
+        path = QPainterPath()
+        path.moveTo(x, y)
+        path.quadTo(x + direction * 1.3, y - size * 0.7, x + direction * 2.3, y + 1)
+        path.quadTo(x + direction * 1.2, y + size * 0.6, x, y)
+        painter.drawPath(path)
+
+    def _flower(self, painter, cx, cy, size):
+        import math
+        for index in range(5):
+            angle = index * 72 * math.pi / 180
+            px = cx + size * 0.85 * math.cos(angle)
+            py = cy + size * 0.85 * math.sin(angle)
+            painter.drawEllipse(int(px - size * 0.5), int(py - size * 0.5),
+                                int(size), int(size))
 
 
 class Bubble(QFrame):
@@ -214,12 +339,13 @@ class Bubble(QFrame):
         if not paragraphs:
             paragraphs = [""]
         for paragraph in paragraphs:
-            body = QLabel(wrap_chars(paragraph))
+            body = QLabel(paragraph)
             body.setWordWrap(False)
+            body.setProperty("raw", paragraph)
             body.setTextInteractionFlags(Qt.TextSelectableByMouse)
             body.setObjectName("bubbleBody")
             body.setStyleSheet(
-                "QLabel#bubbleBody { background: #ffffff; padding: 10px 12px;"
+                "QLabel#bubbleBody { background: rgba(255,255,255,0.64); padding: 10px 12px;"
                 " border-radius: 6px; }")
             layout.addWidget(body)
             self.bodies.append(body)
@@ -384,6 +510,9 @@ class ChatPage(QWidget):
         self.messages.setSpacing(14)
         self.messages.addStretch(1)
         self.scroll.setWidget(self.stack)
+        self.scroll.viewport().setAutoFillBackground(False)
+        self.stack.setAutoFillBackground(False)
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; }")
         self._follow = True
         self._vbar = self.scroll.verticalScrollBar()
         self._vbar.rangeChanged.connect(self._on_range)
@@ -396,7 +525,7 @@ class ChatPage(QWidget):
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(4, 2, 4, 0)
         self.usage = QLabel("usage —")
-        self.usage.setObjectName("muted")
+        self.usage.setObjectName("usage")
         bar_layout.addWidget(self.usage)
         bar_layout.addStretch(1)
         self.pending_label = QLabel("")
@@ -618,13 +747,13 @@ class ChatPage(QWidget):
         widest = 160
         for body in bodies:
             body.ensurePolished()
-            body.setMaximumWidth(16777215)
             fm = QFontMetrics(body.font())
-            longest = max(fm.horizontalAdvance(line)
-                          for line in body.text().splitlines()) if body.text() else 0
-            width = min(limit, max(160, longest + 40))
+            raw = body.property("raw") or body.text()
+            body.setText(wrap_to_px(raw, fm, limit - 54))
+            longest = max((fm.horizontalAdvance(line)
+                           for line in body.text().splitlines()), default=0)
+            width = min(limit, max(160, int(longest * 1.06) + 54))
             body.setFixedWidth(width)
-            body.setMinimumHeight(fm.height() * max(1, len(body.text().splitlines())) + 24)
             widest = max(widest, width)
         bubble.setFixedWidth(widest + 4)
 
@@ -836,6 +965,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"PhilosophicalZombie · {BUILD}")
         self.resize(1180, 760)
 
+        self.backdrop = Backdrop(self)
+        self.backdrop.lower()
+
         root = QWidget()
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -865,6 +997,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
         self.setStyleSheet(QSS)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.backdrop.setGeometry(0, 0, self.width(), self.height())
+        self.backdrop.lower()
 
     def switch(self, index):
         for i, btn in enumerate(self.buttons):
