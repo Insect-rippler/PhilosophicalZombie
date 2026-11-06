@@ -474,6 +474,12 @@ class ChatPage(QWidget):
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start()
 
+        self._poll_timer = _QT(self)
+        self._poll_timer.setInterval(6000)
+        self._poll_timer.timeout.connect(self._poll_history)
+        self._poll_timer.start()
+        self._seen = 0
+
         row_outer = QHBoxLayout(self)
         row_outer.setContentsMargins(0, 0, 0, 0)
         row_outer.setSpacing(0)
@@ -600,6 +606,36 @@ class ChatPage(QWidget):
         super().resizeEvent(event)
         self.panel.setGeometry(0, 0, 230, self.height())
         self._fit_all()
+
+    def _poll_history(self):
+        """她自己在后台醒过来时，把新消息补进界面。"""
+        if self.worker and self.worker.isRunning():
+            return
+        try:
+            rows = api_get("/history?limit=60").get("messages") or []
+        except Exception:                    # noqa: BLE001
+            return
+        if not rows:
+            return
+        if self._seen == 0:
+            self._seen = len(rows)
+            return
+        if len(rows) <= self._seen:
+            self._seen = len(rows)
+            return
+        for row in rows[self._seen:]:
+            role = row.get("role")
+            text = str(row.get("text") or "")
+            if not text:
+                continue
+            if role == "narration":
+                self.add_bubble("narration", text, ts=row.get("ts") or "")
+            elif role == "tip":
+                self.add_bubble("tip", text)
+            elif role in ("user", "assistant"):
+                self.add_bubble(role, text, ts=row.get("ts") or "")
+        self._seen = len(rows)
+        self.scroll_to_bottom()
 
     def _tick_clock(self):
         import time as _t
@@ -852,6 +888,7 @@ VISIBLE = {
     "payload.api", "payload.max_tokens", "payload.stream",
     "payload.temperature", "payload.user_id",
     "harness.name", "harness.usage.maxTurn",
+    "harness.idle.enabled", "harness.idle.afterMinutes",
     "harness.retrieval.queryTurns.withMessage",
     "harness.retrieval.queryTurns.maxChars",
     "harness.retrieval.memory.topK",
@@ -901,6 +938,8 @@ LABELS = {
     "payload.top_logprobs": "概率条数",
     "payload.user_id": "用户标识",
     "harness.name": "角色名",
+    "harness.idle.enabled": "静默唤醒",
+    "harness.idle.afterMinutes": "静默多久醒来（分钟）",
     "harness.usage.maxTurn": "统计轮数",
     "harness.usage.avgWindow": "平均命中窗口",
     "harness.session.compressionThreshold": "压缩阈值",
@@ -939,6 +978,7 @@ GROUPS = {
     "payload.stream_options": "流式选项",
     "harness": "运行参数",
     "harness.usage": "用量",
+    "harness.idle": "静默唤醒",
     "harness.session": "会话与压缩",
     "harness.subprocess": "子进程",
     "harness.loop": "工具循环",
@@ -1122,40 +1162,131 @@ class ConfigPage(QWidget):
 
 # ---------------- 识域页 ----------------
 
-class RealmPage(QWidget):
+class SkillPage(QWidget):
+    """技能：左列标题，右侧关键词、关键词池与正文。"""
+
     def __init__(self):
         super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        self.items = []
+        self.current = -1
 
-        left = QWidget()
-        left.setFixedWidth(200)
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 16, 28, 14)
+        layout.setSpacing(10)
+
+        head = QHBoxLayout()
+        title = QLabel("技能")
+        title.setObjectName("h1")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.constant = QCheckBox("是否常驻")
+        head.addWidget(self.constant)
+        self.hint = QLabel("")
+        self.hint.setObjectName("info")
+        head.addWidget(self.hint)
+        save = QPushButton("保存")
+        save.clicked.connect(self.save)
+        head.addWidget(save)
+        layout.addLayout(head)
+
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        self.list = QListWidget()
+        self.list.setFixedWidth(190)
+        self.list.currentRowChanged.connect(self.select)
+        body.addWidget(self.list)
+
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self._label("关键词池"))
+        self.pool = QLineEdit()
+        self.pool.setPlaceholderText("用、分隔，例如：打铁、烛火、莱塔尼亚")
+        row.addWidget(self.pool, 1)
+        right.addLayout(row)
+
+        self.body = QPlainTextEdit()
+        self.body.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        right.addWidget(self.body, 1)
+        body.addLayout(right, 1)
+        layout.addLayout(body, 1)
+
+        self.load()
+
+    @staticmethod
+    def _label(text):
+        label = QLabel(text)
+        label.setObjectName("info")
+        return label
+
+    def load(self):
+        data = api_get("/skill") or {}
+        self.items = data.get("items") or []
+        self.list.clear()
+        for index, item in enumerate(self.items, 1):
+            self.list.addItem(str(item.get("title") or f"技能 {index}"))
+        if self.list.count():
+            self.list.setCurrentRow(0)
+        self.hint.setText(f"{len(self.items)} 条")
+
+    def select(self, index):
+        if not (0 <= index < len(self.items)):
+            return
+        self.current = index
+        item = self.items[index]
+        self.constant.setChecked(bool(item.get("constant")))
+        self.pool.setText("、".join(str(k) for k in item.get("keywords") or []))
+        self.body.setPlainText(str(item.get("content") or ""))
+
+    def save(self):
+        if not (0 <= self.current < len(self.items)):
+            return
+        item = self.items[self.current]
+        item["constant"] = self.constant.isChecked()
+        item["keywords"] = [k.strip() for k in
+                            self.pool.text().replace("，", "、").split("、") if k.strip()]
+        item["content"] = self.body.toPlainText().strip()
+        result = api_send("POST", "/skill", {"items": self.items})
+        self.hint.setText(f"已保存 {result.get('count', 0)} 条")
+
+
+class RealmPage(QWidget):
+    """识域：左侧文件列表，右侧原文；末尾追加「技能」。"""
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 16, 28, 14)
+        layout.setSpacing(10)
+
+        head = QHBoxLayout()
         title = QLabel("识域")
         title.setObjectName("h1")
-        left_layout.addWidget(title)
-        self.list = QListWidget()
-        self.list.currentTextChanged.connect(self.load_file)
-        left_layout.addWidget(self.list, 1)
+        head.addWidget(title)
+        head.addStretch(1)
+        self.hint = QLabel("")
+        self.hint.setObjectName("info")
+        head.addWidget(self.hint)
+        self.save_btn = QPushButton("保存")
+        self.save_btn.clicked.connect(self.save_file)
+        head.addWidget(self.save_btn)
+        layout.addLayout(head)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        body = QHBoxLayout()
+        body.setSpacing(14)
+
+        self.list = QListWidget()
+        self.list.setFixedWidth(190)
+        self.list.currentTextChanged.connect(self.load_entry)
+        body.addWidget(self.list)
+
         self.editor = QPlainTextEdit()
         self.editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-        right_layout.addWidget(self.editor, 1)
-        row = QHBoxLayout()
-        self.hint = QLabel("")
-        self.hint.setObjectName("muted")
-        save = QPushButton("保存")
-        save.clicked.connect(self.save_file)
-        row.addWidget(self.hint, 1)
-        row.addWidget(save)
-        right_layout.addLayout(row)
+        self.editor.setObjectName("realmEditor")
+        body.addWidget(self.editor, 1)
+        layout.addLayout(body, 1)
 
-        layout.addWidget(left)
-        layout.addWidget(right, 1)
         self.load_list()
 
     def load_list(self):
@@ -1163,16 +1294,21 @@ class RealmPage(QWidget):
             files = api_get("/realm").get("files") or []
         except Exception:                    # noqa: BLE001
             files = []
+        self.list.clear()
         self.list.addItems(files)
+        if self.list.count():
+            self.list.setCurrentRow(0)
 
-    def load_file(self, name):
+    def load_entry(self, name):
         if not name:
             return
         try:
             data = api_get(f"/realm/{name}")
-        except Exception as e:               # noqa: BLE001
-            self.hint.setText(f"读取失败：{e}")
+        except Exception as error:            # noqa: BLE001
+            self.hint.setText(f"读取失败：{error}")
             return
+        self.editor.setReadOnly(False)
+        self.save_btn.setVisible(True)
         self.editor.setPlainText(data.get("text") or "")
         self.hint.setText(f"{name} · {len(data.get('text') or '')} 字")
 
@@ -1210,7 +1346,8 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.buttons = []
         for index, (label, page) in enumerate([
-                ("对话", ChatPage()), ("配置", ConfigPage()), ("识域", RealmPage())]):
+                ("对话", ChatPage()), ("配置", ConfigPage()),
+                ("识域", RealmPage()), ("技能", SkillPage())]):
             btn = QPushButton(label)
             btn.setObjectName("nav")
             btn.setCheckable(True)

@@ -27,6 +27,7 @@ import core                      # noqa: E402
 from engine import timers        # noqa: E402
 
 PORT = 8765
+TICK_SECONDS = 60          # 1 tick = 1 分钟
 HOST = "127.0.0.1"
 LOCK = threading.Lock()          # 一轮对话独占，避免两轮同时改 session
 
@@ -366,6 +367,80 @@ def last_usage():
                            / max(1, core.COMPRESSION_THRESHOLD), 2)}
 
 
+def skill_text():
+    """把 skill.json 渲染成可读文本。"""
+    target = core.REALM_ROOT / "skill" / "skill.json"
+    if not target.exists():
+        return {"text": "", "count": 0}
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"text": "", "count": 0}
+
+    lines = []
+    items = data.get("skills") if isinstance(data, dict) else data
+    for index, item in enumerate(items or [], 1):
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title") or f"技能 {index}"
+        lines.append(f"## {title}")
+        keywords = item.get("keywords") or []
+        if keywords:
+            lines.append("关键词：" + "、".join(str(k) for k in keywords))
+        for key, value in item.items():
+            if key in ("title", "keywords"):
+                continue
+            if isinstance(value, list):
+                lines.append(f"- {key}：")
+                for entry in value:
+                    lines.append(f"  - {entry}")
+            else:
+                lines.append(f"- {key}：{value}")
+        lines.append("")
+    return {"text": "\n".join(lines), "count": len(items or []),
+            "items": items or []}
+
+
+def idle_settings():
+    node = (core.harness or {}).get("idle") or {}
+    try:
+        minutes = float(node.get("afterMinutes", 30))       # 以 tick 计，即分钟
+    except (TypeError, ValueError):
+        minutes = 30.0
+    return bool(node.get("enabled", True)), max(1.0, minutes)
+
+
+def last_activity_at():
+    try:
+        marks = json.loads((core.ROOT / "state" / "realTime" / "events.json")
+                           .read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0.0
+    return float(marks.get("lastMessageAt") or 0)
+
+
+def idle_tick():
+    """静默超过阈值时，让她自己醒来走一轮。调用方需持有 LOCK。"""
+    enabled, minutes = idle_settings()
+    if not enabled:
+        return 0
+    last = last_activity_at()
+    if not last:
+        return 0
+    import time as _time
+    if _time.time() - last < minutes * TICK_SECONDS:
+        return 0
+
+    payload = core.context_assemble()
+    chunks = []
+    run_with_tools(payload, lambda kind, value: chunks.append(value)
+                   if kind == "delta" else None)
+    reply = "".join(chunks).strip()
+    if reply:
+        core.append_session([{"role": "assistant", "content": reply}])
+    return 1 if reply else 0
+
+
 def state_snapshot():
     ch = timers.load_character()
     marks = {}
@@ -452,6 +527,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 40
             return self._json({"messages": session_history(limit)})
+        if path == "/skill":
+            return self._json(skill_text())
         if path == "/usage":
             return self._json(last_usage())
         if path == "/state":
@@ -481,6 +558,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._turn(self._body())
         if path == "/config":
             return self._save_config(self._body())
+        if path == "/skill":
+            return self._save_skill(self._body())
         self._json({"error": "not found"}, 404)
 
     def do_PUT(self):
@@ -534,6 +613,16 @@ class Handler(BaseHTTPRequestHandler):
             emit("done", reply)
         self.close_connection = True
 
+    def _save_skill(self, data):
+        items = data.get("items")
+        if not isinstance(items, list):
+            return self._json({"error": "items 必须是数组"}, 400)
+        target = core.REALM_ROOT / "skill" / "skill.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"skills": items}, ensure_ascii=False, indent=4) + "\n",
+                          encoding="utf-8")
+        self._json({"ok": True, "count": len(items)})
+
     def _save_config(self, data):
         payload = data.get("config") if isinstance(data.get("config"), dict) else None
         if payload:
@@ -562,7 +651,24 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True})
 
 
+def idle_loop():
+    import time as _time
+    while True:
+        _time.sleep(TICK_SECONDS)
+        if LOCK.acquire(blocking=False):
+            try:
+                if idle_tick():
+                    print("[idle] 自己醒了一轮", flush=True)
+            except Exception:                # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+            finally:
+                LOCK.release()
+
+
 def main():
+    import threading
+    threading.Thread(target=idle_loop, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"服务已启动：http://{HOST}:{PORT}", flush=True)
     try:
