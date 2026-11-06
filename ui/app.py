@@ -927,8 +927,8 @@ LABELS = {
     "harness.dream.block.minRecalledChars": "沉淀字符下限",
     "harness.dream.block.minRecalls": "沉淀召回次数",
     "harness.dream.memory.minRecalls": "记忆召回次数",
-    "harness.dream.memory.minSources": "记忆来源数",
-    "harness.dream.persona.minEvents": "人格事件数",
+    "harness.dream.memory.minSources": "证据数量要求",
+    "harness.dream.persona.minEvents": "证据数量要求",
     "harness.dream.maxTokens": "升格输出上限",
     "tools.tavily.api": "搜索密钥",
 }
