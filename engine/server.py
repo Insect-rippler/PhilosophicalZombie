@@ -142,6 +142,7 @@ def run_with_tools(payload, emit):
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
         calls, content_parts, usage = [], [], None
+        reasoning_parts = []
         try:
             with requests.post(
                 core.chat_completions_url,
@@ -181,6 +182,9 @@ def run_with_tools(payload, emit):
                                 fn = call.get("function") or {}
                                 slot["function"]["name"] += fn.get("name") or ""
                                 slot["function"]["arguments"] += fn.get("arguments") or ""
+                        thought = delta.get("reasoning_content")
+                        if thought:
+                            reasoning_parts.append(thought)
                         piece = delta.get("content")
                         if piece:
                             content_parts.append(piece)
@@ -204,10 +208,13 @@ def run_with_tools(payload, emit):
 
         last_text = "".join(content_parts)
         if not calls:
+            run_with_tools.reasoning = "".join(reasoning_parts)
             return True, last_text
 
 
         assistant = {"role": "assistant", "content": "".join(content_parts)}
+        if reasoning_parts:
+            assistant["reasoning_content"] = "".join(reasoning_parts)
         assistant["tool_calls"] = calls
         results = []
         for call in calls:
@@ -496,7 +503,11 @@ class Handler(BaseHTTPRequestHandler):
                 emit("error", f"{type(e).__name__}: {e}")
                 reply = ""
             if reply:
-                core.append_session([{"role": "assistant", "content": reply}])
+                done_msg = {"role": "assistant", "content": reply}
+                reasoning = getattr(run_with_tools, "reasoning", "")
+                if reasoning:
+                    done_msg["reasoning_content"] = reasoning
+                core.append_session([done_msg])
             emit("done", reply)
         self.close_connection = True
 

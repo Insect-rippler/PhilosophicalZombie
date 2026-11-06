@@ -40,6 +40,8 @@ QWidget {{ background: {PAPER}; color: #23211e; font-size: 13.5px; }}
 QLabel#h1 {{ font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#info {{ color: #a8a49c; font-size: 12px; }}
+QLabel#narration {{ color: #9d988f; }}
+QLabel#tipItem {{ color: #b3aea6; }}
 QLabel#stamp {{ color: #b3aea6; font-size: 10px; }}
 QLabel#clock {{ color: #9d988f; font-size: 12px; padding: 0 14px; }}
 QFrame#card {{ background: #ffffff; border: 1px solid {LINE}; border-radius: 6px; }}
@@ -66,9 +68,9 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QListWidget {{ border: 1px solid {LINE}; background: #ffffff; border-radius: 6px; }}
 QListWidget::item {{ padding: 8px 10px; }}
 QListWidget::item:selected {{ background: #efece6; color: #23211e; }}
-QPushButton#tipHeader {{ border: none; background: transparent; color: {MUTED};
-                         padding: 0; text-align: left; font-size: 11px; }}
-QPushButton#tipHeader:hover {{ color: {ACCENT}; }}
+QPushButton#tipHeader {{ border: none; background: transparent; color: #a8a49c;
+                         padding: 2px 4px; text-align: left; font-size: 11px; }}
+QPushButton#tipHeader:hover {{ color: {ACCENT}; background: #efece6; }}
 QPushButton#picker {{ border: 1px solid {LINE}; padding: 5px 14px; background: #ffffff;
                       border-radius: 5px; color: {MUTED}; }}
 """
@@ -178,10 +180,12 @@ class Bubble(QFrame):
             label = QLabel(text)
             label.setWordWrap(True)
             label.setAlignment(Qt.AlignCenter)
-            label.setObjectName("muted")
+            label.setObjectName("narration")
             font = label.font()
             font.setItalic(True)
+            font.setPointSizeF(max(9.0, font.pointSizeF() - 0.5))
             label.setFont(font)
+            layout.setContentsMargins(0, 2, 0, 2)
             layout.addWidget(label)
             return
 
@@ -240,10 +244,11 @@ class TipGroup(QFrame):
         self.setObjectName("tipBox")
         self.setStyleSheet("QFrame#tipBox { border: none; background: transparent; }")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(1)
 
         self.header = QPushButton()
+        self.header.setFlat(True)
         self.header.setObjectName("tipHeader")
         self.header.setCursor(Qt.PointingHandCursor)
         self.header.clicked.connect(self.toggle)
@@ -266,8 +271,8 @@ class TipGroup(QFrame):
             self.header.setText(f"· {self.count} 次工具调用 {'▾' if self.expanded else '▸'}")
 
     def add(self, text):
-        label = QLabel(f"  {text}")
-        label.setObjectName("muted")
+        label = QLabel(f"　{text}")
+        label.setObjectName("tipItem")
         f = label.font()
         f.setPointSizeF(max(8.5, f.pointSizeF() - 1.5))
         label.setFont(f)
@@ -379,6 +384,10 @@ class ChatPage(QWidget):
         self.messages.setSpacing(14)
         self.messages.addStretch(1)
         self.scroll.setWidget(self.stack)
+        self._follow = True
+        self._vbar = self.scroll.verticalScrollBar()
+        self._vbar.rangeChanged.connect(self._on_range)
+        self._vbar.valueChanged.connect(self._on_scroll)
         outer.addWidget(self.scroll, 1)
 
         bar = QFrame()
@@ -584,7 +593,9 @@ class ChatPage(QWidget):
         if not text or (self.worker and self.worker.isRunning()):
             return
         self.input.clear()
+        self._follow = True
         self.add_bubble("user", text)
+        self.scroll_to_bottom()
         self.add_bubble("assistant", "", split=False)
         self._stream_bubble = self.messages.itemAt(self.messages.count() - 2).widget()
         self._stream_label = self._stream_bubble.findChildren(QLabel)[-1]
@@ -628,6 +639,13 @@ class ChatPage(QWidget):
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def _on_range(self, _minimum, _maximum):
+        if self._follow:
+            self._vbar.setValue(self._vbar.maximum())
+
+    def _on_scroll(self, value):
+        self._follow = value >= self._vbar.maximum() - 8
+
     def scroll_to_bottom(self):
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
@@ -654,6 +672,12 @@ class ChatPage(QWidget):
             return
         if kind == "narration":
             self.add_bubble("narration", label)
+            bubble = getattr(self, "_stream_bubble", None)
+            if bubble is not None:
+                item = self.messages.indexOf(bubble)
+                made = self.messages.itemAt(self.messages.count() - 2).widget()
+                self.messages.removeWidget(made)
+                self.messages.insertWidget(max(0, item), made)
             return
         if self._tip_group is None:
             self._tip_group = TipGroup()
@@ -664,18 +688,20 @@ class ChatPage(QWidget):
     def _on_delta(self, text):
         self._buffer = getattr(self, "_buffer", "") + text
         label = getattr(self, "_stream_label", None)
+        bubble = getattr(self, "_stream_bubble", None)
         if label is not None:
-            label.setText(self._buffer)
-            bubble = getattr(self, "_stream_bubble", None)
+            label.setText(wrap_chars(self._buffer))
             if bubble is not None:
                 self._fit_width(bubble)
+                if self._follow:
+                    self._vbar.setValue(self._vbar.maximum())
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
     def _on_done(self, text):
         label = getattr(self, "_stream_label", None)
         if label is not None and text and text != getattr(self, "_buffer", ""):
-            label.setText(text)
+            label.setText(wrap_chars(text))
         if self._tip_group is not None:
             self._tip_group.collapse()
             self._tip_group = None

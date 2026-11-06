@@ -180,6 +180,8 @@ def normalize_message(rec):
     msg = {"role": role, "content": content}
     if rec.get("name"):
         msg["name"] = rec["name"]
+    if rec.get("reasoning_content"):
+        msg["reasoning_content"] = rec["reasoning_content"]
     if calls:
         msg["tool_calls"] = calls            # assistant 的工具调用必须留着，否则后续 tool 消息无主
     if role == "tool" and rec.get("tool_call_id"):
