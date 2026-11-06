@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
                            QPixmap)
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QPlainTextEdit,
                                QPushButton, QScrollArea, QSizePolicy, QSplitter,
@@ -845,51 +845,131 @@ class ChatPage(QWidget):
 # ---------------- 配置页 ----------------
 
 class ConfigPage(QWidget):
-    FIELDS = [("model", "模型"), ("temperature", "温度"),
-              ("max_tokens", "最大输出"), ("reasoning_effort", "思考强度")]
+    """把 state/Philosophical.json 整棵树铺成表单。"""
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        self.editors = {}
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 16, 28, 14)
+        outer.setSpacing(10)
+
+        head = QHBoxLayout()
         title = QLabel("配置")
         title.setObjectName("h1")
-        layout.addWidget(title)
-
-        self.edits = {}
-        for key, label in self.FIELDS:
-            row = QHBoxLayout()
-            name = QLabel(label)
-            name.setFixedWidth(90)
-            edit = QLineEdit()
-            row.addWidget(name)
-            row.addWidget(edit, 1)
-            layout.addLayout(row)
-            self.edits[key] = edit
-
+        head.addWidget(title)
+        head.addStretch(1)
+        self.hint = QLabel("")
+        self.hint.setObjectName("info")
+        head.addWidget(self.hint)
         save = QPushButton("保存")
         save.clicked.connect(self.save)
-        layout.addWidget(save)
-        layout.addStretch(1)
+        head.addWidget(save)
+        outer.addLayout(head)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.holder = QWidget()
+        self.form = QVBoxLayout(self.holder)
+        self.form.setContentsMargins(0, 0, 0, 0)
+        self.form.setSpacing(12)
+        self.form.addStretch(1)
+        self.scroll.setWidget(self.holder)
+        outer.addWidget(self.scroll, 1)
+
         self.load()
+
+    # ---- 构建 ----
 
     def load(self):
         try:
-            cfg = api_get("/config").get("payload") or {}
-        except Exception:                    # noqa: BLE001
+            cfg = api_get("/config")
+        except Exception as error:            # noqa: BLE001
+            self.hint.setText(f"读取失败：{error}")
             return
-        for key, _ in self.FIELDS:
-            value = cfg.get(key)
-            self.edits[key].setText("" if value is None else str(value))
+        self.editors.clear()
+        while self.form.count() > 1:
+            item = self.form.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for section, values in cfg.items():
+            if section in ("messages", "tools"):
+                continue
+            if not isinstance(values, dict):
+                continue
+            self.form.insertWidget(self.form.count() - 1, self._section(section, values))
+        self.hint.setText("来自 state/Philosophical.json")
+
+    def _section(self, name, values):
+        card = QFrame()
+        card.setObjectName("card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(18, 14, 18, 14)
+        box.setSpacing(6)
+
+        title = QLabel(name)
+        title.setObjectName("h1")
+        box.addWidget(title)
+        box.addSpacing(4)
+        self._rows(box, values, (name,))
+        return card
+
+    def _rows(self, box, values, path):
+        for key, value in values.items():
+            if key in ("messages", "tools"):
+                continue
+            if isinstance(value, dict):
+                label = QLabel(key)
+                label.setObjectName("muted")
+                box.addWidget(label)
+                self._rows(box, value, path + (key,))
+                continue
+            row = QHBoxLayout()
+            name = QLabel(key)
+            name.setFixedWidth(190)
+            name.setObjectName("muted")
+            row.addWidget(name)
+
+            if isinstance(value, bool):
+                editor = QCheckBox()
+                editor.setChecked(value)
+            else:
+                editor = QLineEdit(str(value))
+            row.addWidget(editor, 1)
+            box.addLayout(row)
+            self.editors[path + (key,)] = (editor, type(value))
+
+    # ---- 保存 ----
 
     def save(self):
-        payload = {}
-        for key, _ in self.FIELDS:
-            text = self.edits[key].text().strip()
-            if not text:
-                continue
-            payload[key] = int(text) if text.isdigit() else text
-        api_send("POST", "/config", {"payload": payload})
+        config = {}
+        for path, (editor, kind) in self.editors.items():
+            if kind is bool:
+                value = editor.isChecked()
+            elif kind is int:
+                try:
+                    value = int(editor.text().strip())
+                except ValueError:
+                    continue
+            elif kind is float:
+                try:
+                    value = float(editor.text().strip())
+                except ValueError:
+                    continue
+            else:
+                value = editor.text().strip()
+
+            node = config
+            for part in path[:-1]:
+                node = node.setdefault(part, {})
+            node[path[-1]] = value
+
+        try:
+            api_send("POST", "/config", {"config": config})
+            self.hint.setText("已保存")
+        except Exception as error:            # noqa: BLE001
+            self.hint.setText(f"保存失败：{error}")
 
 
 # ---------------- 识域页 ----------------

@@ -385,12 +385,35 @@ def state_snapshot():
     }
 
 
+SECRET_KEYS = {"api", "key", "token", "secret"}
+SKIP_KEYS = {"messages", "tools"}
+
+
+def mask_tree(node):
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if key in SECRET_KEYS and isinstance(value, str) and value:
+                out[key] = "***"
+            else:
+                out[key] = mask_tree(value)
+        return out
+    return node
+
+
 def mask_config():
-    cfg = core.loadConfig()
-    payload = dict(cfg.get("payload") or {})
-    if payload.get("api"):
-        payload["api"] = "***"
-    return {"payload": payload, "harness": cfg.get("harness") or {}}
+    return mask_tree(core.loadConfig())
+
+
+def merge_config(target, patch):
+    """深合并；api 之类的掩码值不覆盖。"""
+    for key, value in patch.items():
+        if key in SECRET_KEYS and value == "***":
+            continue
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge_config(target[key], value)
+        else:
+            target[key] = value
 
 
 REALM_FILES = ("PERSONA.md", "CHARACTER.md", "AGENT.md",
@@ -512,6 +535,16 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def _save_config(self, data):
+        payload = data.get("config") if isinstance(data.get("config"), dict) else None
+        if payload:
+            cfg = core.loadConfig()
+            merge_config(cfg, payload)
+            core.CFG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=4) + "\n",
+                                     encoding="utf-8")
+            return self._json({"ok": True})
+        return self._save_config_flat(data)
+
+    def _save_config_flat(self, data):
         cfg_path = core.CFG_PATH
         cfg = core.loadConfig()
         payload = cfg.setdefault("payload", {})
