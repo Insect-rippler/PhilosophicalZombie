@@ -319,7 +319,7 @@ def settle(now=None, *, rng=None):
 
 # 每小时变化：运动/睡眠不同。负数是减少，正数是增加。
 RATES = {
-    "awake": {"satiety": -4.0, "hydration": -6.0, "fatigue": +3.0, "sleepiness": +4.0},
+    "awake": {"satiety": -4.0, "hydration": -6.0, "fatigue": -0.5, "sleepiness": +4.0},
     "sleep": {"satiety": -1.5, "hydration": -2.0, "fatigue": -12.0, "sleepiness": -14.0},
 }
 MAX_GAP_HOURS = 12
@@ -342,6 +342,10 @@ def advance(now=None):
     now = time.time() if now is None else float(now)
     ch = load_character()
     last = float(ch.get("lastUpdate") or now)
+    if last > now + 300:                 # 时钟被回拨或换了环境，重置基准
+        ch["lastUpdate"] = now
+        _write(CHARACTER, ch)
+        return 0.0, {}
     hours = (now - last) / 3600.0
     if hours <= 0.01:
         return 0.0, {}

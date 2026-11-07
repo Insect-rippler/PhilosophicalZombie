@@ -4,7 +4,7 @@
             "type": "function",
             "name": "active",
             "path": "",
-            "description": "声明她正在做的一件事。description 说清做什么、对什么、在哪儿。时长由 body 判定。",
+            "description": "声明角色正在做的一件事。description 说清做什么、对什么、在哪儿；body 判定可执行性与时长。需要时用 scene 附带一句环境变化。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -24,6 +24,22 @@
                             "event"
                         ],
                         "description": "short：一下就能做完的小动作。long：要花一阵、但仍然是你亲自做的事。event：中间不需要你做决定的连续劳动（打一件铁、烧一炉砖、守夜到天亮）；这类事一次交出去，过程不给画面，到点叫你"
+                    },
+                    "scene": {
+                        "type": "string",
+                        "description": "可选。这件事发生的同时，环境有什么可见的变化：光、声、天气、气味、旁人的位置。只随动作一起交代，不能单独递交。"
+                    },
+                    "appeal": {
+                        "type": "object",
+                        "description": "可选。觉得**正在执行的那件事**占用时间不合理时申辩：说明理由和你认为它应该用多少分钟，body 决定是否采纳并缩短。",
+                        "properties": {
+                            "minutes": {
+                                "type": "number"
+                            },
+                            "reason": {
+                                "type": "string"
+                            }
+                        }
                     }
                 },
                 "required": [
@@ -571,23 +587,6 @@
                 },
                 "required": [
                     "action"
-                ]
-            }
-        },
-        {
-            "name": "scene",
-            "path": "function/scene/scene.py",
-            "description": "交代场景：光线、声音、天气、气味、旁人的动作与位置变化。正文只写她说的台词，动作走 active，环境一律走这里。只有画面真的变了才调用，不必每轮都写。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "客观描述此刻环境发生了什么变化，一到两句"
-                    }
-                },
-                "required": [
-                    "description"
                 ]
             }
         }

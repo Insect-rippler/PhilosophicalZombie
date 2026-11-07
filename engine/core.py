@@ -145,7 +145,8 @@ def _num(path, default, cast=int):
 # 实测 0.403（孤立）→ 0.592（带 1 轮）→ 0.686（带 2 轮）。
 QUERY_TURNS_WITH_MESSAGE = _num("retrieval.queryTurns.withMessage", 2)
 QUERY_TURNS_LOOP = _num("retrieval.queryTurns.loopRound", 3)
-QUERY_MAX_CHARS = _num("retrieval.queryTurns.maxChars", 400)
+QUERY_MAX_CHARS = _num("retrieval.queryTurns.maxChars", 500)
+QUERY_WINDOW_MINUTES = _num("retrieval.queryTurns.windowMinutes", 60)
 
 MEMORY_TOP_K = _num("retrieval.memory.topK", 6)
 BLOCK_TOP_K = _num("retrieval.memory.blockTopK", 3)
@@ -245,24 +246,41 @@ def content_text(content):
 
 
 def search_text_make(session, user_message=None):
-    """拼检索查询：最后 n 轮的纯文本，尾部优先，超过上限从头截。"""
-    turns = (get_last_turns(session, QUERY_TURNS_WITH_MESSAGE if user_message else QUERY_TURNS_LOOP)
-             if session else [])
-    texts = [content_text(m.get("content")) for m in turns
-             if m.get("role") in ("user", "assistant")]
+    """拼检索查询：从最近的一条往回抓，攒到上限为止（约 500 字）。
+
+    不按时间窗口截断——睡一觉醒来，睡前那几轮仍要在原料里。
+    """
+    texts = []
+    for message in reversed(session or []):
+        role = message.get("role")
+        if role in ("user", "assistant"):
+            text = content_text(message.get("content")).strip()
+            if text:
+                texts.append(text)
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                if fn.get("name") != "active":
+                    continue
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    continue
+                for key in ("description", "scene"):
+                    piece = str(args.get(key) or "").strip()
+                    if piece:
+                        texts.append(piece)
+
     if user_message:
         texts.append(content_text(user_message.get("content")))
 
     chunks, total = [], 0
-    for text in reversed(texts):
+    for text in texts:                     # 已是「新的在前」
         text = _TAG_RE.sub("", text).strip()
         if not text:
             continue
-        if total + len(text) > QUERY_MAX_CHARS:
-            room = QUERY_MAX_CHARS - total
-            if room > 0:
-                chunks.append(text[-room:])
-            break
+        if total + len(text) + len(chunks) > QUERY_MAX_CHARS:
+            break                          # 装不下（含换行）就不装，也不再往上溯
         chunks.append(text)
         total += len(text)
         if total >= QUERY_MAX_CHARS:
@@ -372,8 +390,8 @@ def lorebook_recall(search_text):
     return "<lorebook_momentary>\n" + "\n\n".join(sections) + "\n</lorebook_momentary>"
 
 
-def skill_recall(skills_data, search_text, limit=3):
-    """非常驻技能：keywords 命中即召回。"""
+def skill_recall(skills_data, search_text, limit=2):
+    """非常驻技能：关键词命中即召回，命中越多越靠前；只按条数截断，不切字数。"""
     if not skills_data or not search_text:
         return ""
     low = search_text.lower()
@@ -382,14 +400,18 @@ def skill_recall(skills_data, search_text, limit=3):
         if skill.get("constant"):
             continue
         keys = [k for k in (skill.get("keywords") or []) if isinstance(k, str) and len(k) >= 2]
-        if any(k.lower() in low for k in keys):
-            hits.append(skill)
+        matched = [k for k in keys if k.lower() in low]
+        if not matched:
+            continue
+        hits.append((len(matched), max(len(k) for k in matched),
+                     int(skill.get("timestamp") or 0), skill))
+
     if not hits:
         return ""
-    hits.sort(key=lambda s: s.get("timestamp", 0), reverse=True)
+    hits.sort(key=lambda item: (-item[0], -item[1], -item[2]))
     body = "\n\n".join(
-        f"## {s.get('title', '')}\n\n{increase_heading_level(str(s.get('content') or ''))}"
-        for s in hits[:limit]
+        f"## {skill.get('title', '')}\n\n{increase_heading_level(str(skill.get('content') or ''))}"
+        for _, _, _, skill in hits[:limit]
     )
     return f"<skill_knowledge>\n{body}\n</skill_knowledge>"
 
@@ -721,7 +743,7 @@ def virtual_active(raw_args):
     slot = "long" if str(args.get("slot") or "short").lower() == "long" else "short"
     force = bool(args.get("force"))
 
-    receipt = body.commit(description, slot, force=force)
+    receipt = body.commit(description, slot, force=force, appeal=args.get("appeal"))
     if not receipt.get("ok") and receipt.get("degraded"):
         ERROR.append(f"[WARN] body 判定失败：{receipt.get('reason')}")
     return json.dumps(receipt, ensure_ascii=False)

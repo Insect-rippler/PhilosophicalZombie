@@ -241,6 +241,14 @@ def run_with_tools(payload, emit):
             output = core.execute_tool_call(call, core.load_registry())
             kind, label = describe_tool(name, args, output)
             emit("tool", {"kind": kind, "name": name, "text": label})
+            if name == "active":
+                try:
+                    scene = json.loads(args).get("scene")
+                except (json.JSONDecodeError, AttributeError):
+                    scene = None
+                if isinstance(scene, str) and scene.strip():
+                    emit("tool", {"kind": "narration", "name": "scene",
+                                  "text": scene.strip()})
             results.append({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
         core.append_session([assistant] + results)

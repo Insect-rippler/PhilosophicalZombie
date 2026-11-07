@@ -225,7 +225,7 @@ def recent_context(limit=6):
                 lines.append(f"- 说：{text.replace(chr(10), ' ')[:80]}")
     return "\n".join(lines[-limit:])
 
-def judge(description, ch=None, force=False):
+def judge(description, ch=None, force=False, appeal=None):
     """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
 
     force=True 表示主代理要打断手上正在做的事：槽位占用不再是阻碍，
@@ -238,13 +238,20 @@ def judge(description, ch=None, force=False):
               "输出 JSON：{\"allow\":true/false, \"reason\":\"做不了时的原因\", "
               "\"duration\":分钟数, \"location\":\"做完之后的位置，没动就省略\", "
               "\"reward\":{\"satiety\":0}, \"text\":\"到点后显示的一句话\"}")
+    appeal_text = ""
+    if isinstance(appeal, dict) and appeal:
+        appeal_text = (f"## 她的申辩\n\n理由：{appeal.get('reason')}；"
+                       f"她认为只需 {appeal.get('minutes')} 分钟。\n"
+                       f"申辩成立就按她的数给；不成立就按你的判断，并在 reason 里说明为什么。\n\n")
+
     user = (
         f"## 当前状态\n\n{state_snapshot(ch)}\n\n"
         f"## 槽位占用\n\n{slot_status(ch)}\n\n"
         f"## 地图\n\n{map_lines(ch)}\n\n"
         f"## 可参考的活动（时长来自数据表，别脱离这个量级）\n\n{_activity_lines(ch)}\n\n"
         f"## 最近的言行\n\n{recent_context()}\n\n"
-        f"## 她要做的事\n\n{description}\n\n"
+        + appeal_text
+        + f"## 她要做的事\n\n{description}\n\n"
         "时长优先取活动表里的值；表里没有的按常识给，但不要离谱。"
         "槽位已满时，只有在一分钟内能做完的事才允许继续，其余一律拒绝。"
     )
@@ -319,13 +326,17 @@ def judge(description, ch=None, force=False):
                     if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]
             doing = str(busy[0].get("semantic") or "").lstrip("她") if busy else ""
             left_sec = 0.0
+            elapsed_sec = 0.0
             if busy:
                 left_sec = max(0.0, float(busy[0].get("at") or 0) - time.time())
+                started = float(busy[0].get("createdAt") or busy[0].get("at") or 0)
+                if started:
+                    elapsed_sec = max(0.0, time.time() - started)
             allow = False
             if doing:
                 reason = (
                     f"动作未受理：她手上的事还没完（{doing}），"
-                    f"还剩 {human_left_sec(left_sec)}。"
+                    f"已进行 {human_left_sec(elapsed_sec)}，还剩 {human_left_sec(left_sec)}。"
                     f"当前正执行的动作结束前，非 force 模式下不会接受任何（short/long）类型动作；"
                     f"若剩余时间小于 3s 且角色有必要执行新动作则可尝试递交新动作，"
                     f"否则以一句话收尾，或以 force 模式强制结束当前动作以执行有必要的新动作。"
@@ -364,23 +375,47 @@ def human_left(minutes):
         return f"{total} 秒"
     return f"{total // 60} 分 {total % 60} 秒"
 
-def commit(description, slot="short", *, ch=None, force=False):
+def commit(description, slot="short", *, ch=None, force=False, appeal=None):
     """判定 + 建计时器，返回给主代理的回执。
 
     slot 参数只是主代理的建议，实际用哪个槽位由 body 按时长决定。
     """
     ch = ch if isinstance(ch, dict) else timers.load_character()
-    verdict = judge(description, ch=ch, force=force)
+    verdict = judge(description, ch=ch, force=force, appeal=appeal)
     if verdict is None:
         return {"ok": False, "reason": "判定失败：body 没有返回可解析的结果", "degraded": True}
 
     if not verdict["allow"]:
+        if isinstance(appeal, dict) and appeal.get("reason"):
+            busy = [t for t in timers.load_timers()
+                    if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]
+            if busy:
+                target = busy[0]
+                second = judge(str(target.get("text") or description), ch=ch,
+                               appeal=appeal)
+                want = float((second or {}).get("duration") or 0)
+                if second and want > 0:
+                    new_at = time.time() + want * 60
+                    if new_at < float(target["at"]):
+                        entries = timers.load_timers()
+                        for e in entries:
+                            if e is target or e.get("id") == target.get("id"):
+                                e["at"] = new_at
+                        timers.save_timers(entries)
+                        return {"已调整": (f"已采纳申辩：{target.get('semantic') or ''} "
+                                          f"改为约 {human_left_sec(want * 60)}后完成。"),
+                                "ok": True, "allow": True}
         return {"未执行": f"递交未受理：{verdict['reason'] or '身体条件不允许'}",
                 "ok": False, "allow": False,
                 "reason": verdict["reason"] or "身体条件不允许"}
 
     if not verdict["text"]:
         verdict["text"] = f"{description}（完成）"
+
+    # 疲劳按这件事的时长给：活动才累，闲着不累
+    reward = dict(verdict.get("reward") or {})
+    reward["fatigue"] = round(float(verdict["duration"]) * 0.05, 2)   # 只按时长，不采纳模型自估
+    verdict["reward"] = reward
 
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
