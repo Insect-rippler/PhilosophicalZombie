@@ -53,3 +53,6 @@ state/realTime/
 
 # 美术素材（版权归原作，不进公开仓库）
 ui/assets/
+
+# 模拟器数据目录（测试产物）
+state/sim/

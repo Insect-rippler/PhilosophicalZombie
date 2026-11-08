@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import paths as _paths
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE_PATH = ROOT / "state" / "file" / "hash.json"
+CACHE_PATH = _paths.data("file", "hash.json")
 
 MAX_BYTES = 64 * 1024 * 1024          # 单文件上限
 EXPIRE_SECONDS = 2592000              # 30 天，接口允许的最大值

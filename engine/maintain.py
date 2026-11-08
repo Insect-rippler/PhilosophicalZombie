@@ -17,6 +17,7 @@
 """
 
 import json
+import paths as _paths
 import sys
 import time
 from pathlib import Path
@@ -25,10 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
 
-MARK = ROOT / "state" / "realTime" / "maintenance.json"
-SESSION = ROOT / "state" / "session" / "session.jsonl"
+MARK = _paths.data("realTime", "maintenance.json")
+SESSION = _paths.data("session", "session.jsonl")
 
-import core                      # noqa: E402
+import core
+import tools                      # noqa: E402
 import dream                     # noqa: E402
 
 import json as _json
@@ -40,7 +42,7 @@ def call_tool(name, args, timeout=600):
 
     不 import 具体实现——这样改了 function/ 下的脚本立刻生效，不用重启。
     """
-    entry = core.load_registry().get(name)
+    entry = tools.tool_entry(name)
     if not entry or not entry.get("path"):
         return None
     script = (ROOT / entry["path"]).resolve()

@@ -8,13 +8,14 @@
 """
 
 import json
+import paths as _paths
 import os
 import random
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / "state" / "realTime" / "events.json"
+STATE = _paths.data("realTime", "events.json")
 WORLD = ROOT / "ConsciousnessRealm" / "world"
 
 from engine import timers
@@ -60,11 +61,6 @@ def note_message(now=None):
     _write(STATE, seen)
 
 
-def note_user(now=None):
-    seen = _read(STATE, {})
-    seen = seen if isinstance(seen, dict) else {}
-    seen["lastUserAt"] = time.time() if now is None else float(now)
-    _write(STATE, seen)
 
 
 def in_hours(hour, span):

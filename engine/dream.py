@@ -16,6 +16,7 @@
 """
 
 import json
+import paths as _paths
 import re
 import sys
 import time
@@ -29,9 +30,10 @@ REALM = ROOT / "ConsciousnessRealm"
 MEMORY_MD = REALM / "MEMORY.md"
 PERSONA_MD = REALM / "PERSONA.md"
 PLAN_GLOB = REALM / "plan" / "archive"
-DREAM_DIR = ROOT / "state" / "dream"
+DREAM_DIR = _paths.data("dream")
 
-import core  # noqa: E402
+import core
+import tools  # noqa: E402
 
 
 # ---------------- 基础设施 ----------------
@@ -58,7 +60,7 @@ MAX_MODEL_TOKENS = int(dream_cfg("maxTokens", 3000))
 def call_tool(name, args, timeout=300):
     """起子进程调 function/ 下的工具，保证改了脚本立刻生效。"""
     import subprocess
-    entry = core.load_registry().get(name)
+    entry = tools.tool_entry(name)
     if not entry or not entry.get("path"):
         raise RuntimeError(f"工具没有可执行路径：{name}")
     script = (ROOT / entry["path"]).resolve()
@@ -539,7 +541,7 @@ def stage_plan(dry_run=False):
                   for s in g.get("steps") or [])
         for g in goals)
     recent = ""
-    session = ROOT / "state" / "session" / "session.jsonl"
+    session = _paths.data("session", "session.jsonl")
     if session.exists():
         lines = [l for l in session.read_text(encoding="utf-8").splitlines() if l.strip()]
         recent = "\n".join(lines[-8:])[:3000]

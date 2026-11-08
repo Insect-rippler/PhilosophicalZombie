@@ -13,6 +13,14 @@
 """
 
 import json
+import paths as _paths
+import time
+
+try:
+    from trace import log
+except ImportError:
+    def log(*a, **k):
+        pass
 import sys
 import threading
 import urllib.parse
@@ -23,7 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
 
-import core                      # noqa: E402
+import body
+import core
+import tools                      # noqa: E402
 from engine import timers        # noqa: E402
 
 PORT = 8765
@@ -56,71 +66,22 @@ def describe_tool(name, args, result):
     return "tip", name
 
 
-def stream_turn(text, emit):
-    """先追加 user，再流式请求。逐块 yield 文本；失败时退回整段。"""
-    payload = core.context_assemble(text)
-    body = dict(payload)
-    body["stream"] = True
-    body["stream_options"] = {"include_usage": True}
-    body.pop("tools", None) if False else None
 
-    import requests
-    import urllib3
-    urllib3.disable_warnings()
 
-    # 先跑工具循环：有工具调用的轮次不走纯流式
-    streamed, reply = run_with_tools(payload, emit)
-    if streamed:
-        yield reply if reply else ""
-        return
+INJECTED_TAGS = ("<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
+                 "<state>", "<plan>", "<user>", "<assistant>")
 
-    got_any = False
-    try:
-        with requests.post(
-            core.chat_completions_url,
-            headers={"Authorization": f"Bearer {core.API_KEY}",
-                     "Content-Type": "application/json"},
-            json=body, stream=True, timeout=(15, 600),
-            verify=core.VERIFY_SSL, proxies={"http": None, "https": None},
-        ) as response:
-            if response.status_code != 200:
-                raise RuntimeError(f"HTTP {response.status_code}")
-            for raw in response.iter_lines(decode_unicode=False):
-                if not raw:
-                    continue
-                line = raw.decode("utf-8", "replace")
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = chunk.get("choices") or []
-                if not choices:
-                    continue
-                delta = (choices[0].get("delta") or {}).get("content")
-                if delta:
-                    got_any = True
-                    yield delta
-    except Exception as e:                   # noqa: BLE001
-        if not got_any:
-            # 流式不可用 → 整段兜底
-            response = core.send(core.payload | {
-                "stream": False,
-                "messages": payload["messages"],
-                "tools": payload["tools"],
-            })
-            text_reply = ""
-            if response:
-                text_reply = ((response.get("choices") or [{}])[0]
-                              .get("message") or {}).get("content") or ""
-            if text_reply:
-                yield text_reply
-            else:
-                yield f"（出错了：{type(e).__name__}）"
+
+def strip_context_leak(text):
+    """模型把自己的上下文块吐出来时，从第一个标签处截断。"""
+    if not text:
+        return text
+    cut = min((text.find(tag) for tag in INJECTED_TAGS if tag in text), default=-1)
+    if cut > 0:
+        return text[:cut].rstrip()
+    if cut == 0:
+        return ""
+    return text
 
 
 def run_with_tools(payload, emit):
@@ -138,6 +99,12 @@ def run_with_tools(payload, emit):
     urllib3.disable_warnings()
 
     last_text = ""
+    spoken_line = ""
+    pending_text = ""
+
+    def emit_pending():
+        if pending_text.strip():
+            emit("delta", pending_text)
     echo = EchoStrip()
     rounds = max(1, int(core.LOOP_MAX))       # 上限统一读 harness.loop.maxRounds
     for _round in range(rounds):
@@ -146,68 +113,88 @@ def run_with_tools(payload, emit):
         calls, content_parts, usage = [], [], None
         reasoning_parts = []
         salvage = Salvager()
-        try:
-            with requests.post(
-                core.chat_completions_url,
-                headers={"Authorization": f"Bearer {core.API_KEY}",
-                         "Content-Type": "application/json"},
-                json=body, stream=True, timeout=(15, 600),
-                verify=core.VERIFY_SSL, proxies={"http": None, "https": None},
-            ) as response:
-                if response.status_code != 200:
-                    return False, ""
-                for raw in response.iter_lines(decode_unicode=False):
-                    if not raw:
-                        continue
-                    line = raw.decode("utf-8", "replace")
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    if chunk.get("usage"):
-                        usage = chunk["usage"]
-                    for choice in chunk.get("choices") or []:
-                        delta = choice.get("delta") or {}
-                        if delta.get("tool_calls"):
-                            for call in delta["tool_calls"]:
-                                idx = call.get("index", len(calls))
-                                while len(calls) <= idx:
-                                    calls.append({"id": "", "type": "function",
-                                                  "function": {"name": "", "arguments": ""}})
-                                slot = calls[idx]
-                                if call.get("id"):
-                                    slot["id"] = call["id"]
-                                fn = call.get("function") or {}
-                                slot["function"]["name"] += fn.get("name") or ""
-                                slot["function"]["arguments"] += fn.get("arguments") or ""
-                        thought = delta.get("reasoning_content")
-                        if thought:
-                            reasoning_parts.append(thought)
-                        piece = delta.get("content")
-                        if piece:
-                            content_parts.append(piece)
-                            visible, events = salvage.feed(piece)
-                            visible = echo.feed(visible)
-                            if visible:
-                                emit("delta", visible)
-                            for event in events:
-                                emit("tool", event)
-        except Exception:                    # noqa: BLE001
+        failure = ""
+        for _attempt in range(3):
+            calls, content_parts, usage = [], [], None
+            reasoning_parts = []
+            salvage = Salvager()
+            buffered = []
+            try:
+                with requests.post(
+                    core.chat_completions_url,
+                    headers={"Authorization": f"Bearer {core.API_KEY}",
+                             "Content-Type": "application/json"},
+                    json=body, stream=True, timeout=(15, 600),
+                    verify=core.VERIFY_SSL, proxies={"http": None, "https": None},
+                ) as response:
+                    if response.status_code != 200:
+                        raise RuntimeError(f"status {response.status_code}")
+                    for raw in response.iter_lines(decode_unicode=False):
+                        if not raw:
+                            continue
+                        line = raw.decode("utf-8", "replace")
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if chunk.get("usage"):
+                            usage = chunk["usage"]
+                        for choice in chunk.get("choices") or []:
+                            delta = choice.get("delta") or {}
+                            if delta.get("tool_calls"):
+                                for call in delta["tool_calls"]:
+                                    idx = call.get("index", len(calls))
+                                    while len(calls) <= idx:
+                                        calls.append({"id": "", "type": "function",
+                                                      "function": {"name": "", "arguments": ""}})
+                                    slot = calls[idx]
+                                    if call.get("id"):
+                                        slot["id"] = call["id"]
+                                    fn = call.get("function") or {}
+                                    slot["function"]["name"] += fn.get("name") or ""
+                                    slot["function"]["arguments"] += fn.get("arguments") or ""
+                            thought = delta.get("reasoning_content")
+                            if thought:
+                                reasoning_parts.append(thought)
+                            piece = delta.get("content")
+                            if piece:
+                                content_parts.append(piece)
+                                visible, events = salvage.feed(piece)
+                                visible = echo.feed(visible)
+                                if visible:
+                                    buffered.append(visible)      # 先攒着，动作展示完再放
+                                for event in events:
+                                    emit("tool", event)
+                failure = ""
+                break
+            except Exception as exc:             # noqa: BLE001
+                failure = f"{type(exc).__name__}: {exc}"
+                log("request.retry", round=_round + 1, attempt=_attempt + 1,
+                    error=failure[:120])
+                if _attempt < 2:
+                    time.sleep(1.2 * (_attempt + 1))
+        if failure:
+            log("request.failed", round=_round + 1, error=failure[:160])
             return False, ""
 
         rest = echo.close()
         if rest.strip():
-            emit("delta", rest)
+            buffered.append(rest)
         tail, tail_events = salvage.flush()
         if tail.strip():
-            emit("delta", tail)
+            buffered.append(tail)
         for event in tail_events:
             emit("tool", event)
+        pending_text = "".join(buffered)
+        cleaned = strip_context_leak(pending_text)
+        if cleaned != pending_text:
+            log("leak.stripped", before=len(pending_text), after=len(cleaned))
+            pending_text = cleaned
 
         if usage:
             try:
@@ -226,8 +213,11 @@ def run_with_tools(payload, emit):
         last_text = "".join(content_parts)
         echo.remember(last_text)
         if not calls:
+            emit_pending()
+            if not pending_text.strip() and spoken_line:
+                return True, ""
             run_with_tools.reasoning = "".join(reasoning_parts)
-            return True, last_text
+            return True, pending_text
 
 
         assistant = {"role": "assistant", "content": "".join(content_parts)}
@@ -238,19 +228,30 @@ def run_with_tools(payload, emit):
         for call in calls:
             name = (call.get("function") or {}).get("name") or ""
             name, args = name, (call.get("function") or {}).get("arguments") or "{}"
-            output = core.execute_tool_call(call, core.load_registry())
-            kind, label = describe_tool(name, args, output)
-            emit("tool", {"kind": kind, "name": name, "text": label})
+            output = tools.execute_tool_call(call, tools.load_registry())
+            scene = said = None
             if name == "active":
+                try:
+                    parsed = json.loads(output)
+                except (json.JSONDecodeError, AttributeError):
+                    parsed = {}
+                said = parsed.get("line")
                 try:
                     scene = json.loads(args).get("scene")
                 except (json.JSONDecodeError, AttributeError):
                     scene = None
-                if isinstance(scene, str) and scene.strip():
-                    emit("tool", {"kind": "narration", "name": "scene",
-                                  "text": scene.strip()})
+            if isinstance(scene, str) and scene.strip():      # 1 环境
+                emit("tool", {"kind": "narration", "name": "scene", "text": scene.strip()})
+            kind, label = describe_tool(name, args, output)
+            emit("tool", {"kind": kind, "name": name, "text": label})   # 2 动作
+            if isinstance(said, str) and said.strip():        # 3 动作时说的话
+                said = said.strip()
+                spoken_line = (spoken_line + said) if spoken_line else said
+                emit("delta", said)
             results.append({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
+
+        emit_pending()                     # 先动作，后台词
         core.append_session([assistant] + results)
         payload = core.context_assemble()
         body = dict(payload)
@@ -258,7 +259,8 @@ def run_with_tools(payload, emit):
         body["stream_options"] = {"include_usage": True}
 
 
-    if not last_text:                        # 还是没有正文：再来一次，纯文本
+    if not last_text and not spoken_line and not calls:   # 真的什么都没产出，才补救
+        log("fallback.plain", round=rounds)
         try:
             plain = dict(body)
             plain["stream"] = False
@@ -266,6 +268,11 @@ def run_with_tools(payload, emit):
             plain["tool_choice"] = "none"
             plain["thinking"] = {"type": "disabled"}
             plain.pop("stream_options", None)
+            plain["messages"] = [
+                m for m in plain.get("messages") or []
+                if not (m.get("role") == "assistant" and m.get("tool_calls"))
+            ] + [{"role": "system",
+                  "content": "只输出角色这一轮说出口的一句话。不要旁白、不要括号、不要解释。"}]
             response = core.send(plain)
             if response:
                 text = ((response.get("choices") or [{}])[0]
@@ -275,24 +282,7 @@ def run_with_tools(payload, emit):
                     return True, text
         except Exception:                    # noqa: BLE001
             pass
-    if not last_text:                        # 一轮下来没有正文：补一次纯文本请求
-        try:
-            plain = dict(body)
-            plain["stream"] = False
-            plain["tools"] = []
-            plain["tool_choice"] = "none"
-            plain["thinking"] = {"type": "disabled"}
-            plain.pop("stream_options", None)
-            response = core.send(plain)
-            if response:
-                text = ((response.get("choices") or [{}])[0]
-                        .get("message") or {}).get("content") or ""
-                if text:
-                    emit("delta", text)
-                    return True, text
-        except Exception:                    # noqa: BLE001
-            pass
-    return True, last_text
+    return True, pending_text
 
 
 # ---------------- 状态 / 配置 / 文件 ----------------
@@ -354,7 +344,7 @@ def usage_window():
 
 def average_cache(window):
     """最近 window 条请求的平均缓存命中率。"""
-    files = sorted((core.ROOT / "state" / "usage").glob("*.jsonl"))
+    files = sorted((_paths.data("usage")).glob("*.jsonl"))
     rows = []
     for path in files:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -373,7 +363,7 @@ def average_cache(window):
 
 def last_usage():
     """最近一条 usage 记录 + 平均命中，供界面启动时显示。"""
-    files = sorted((core.ROOT / "state" / "usage").glob("*.jsonl"))
+    files = sorted((_paths.data("usage")).glob("*.jsonl"))
     row = None
     for path in files:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -543,22 +533,49 @@ def idle_settings():
 
 def last_activity_at():
     try:
-        marks = json.loads((core.ROOT / "state" / "realTime" / "events.json")
+        marks = json.loads((_paths.data("realTime", "events.json"))
                            .read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return 0.0
     return float(marks.get("lastMessageAt") or 0)
 
 
+def sleeping():
+    """角色是否正睡着。睡着时静默不计时，其它触发照常。"""
+    ch = timers.load_character()
+    return (ch.get("state") or {}).get("active") == "sleep"
+
+
+def should_wake(now=None):
+    """醒不醒：计时/事件到了必醒；静默只在醒着时算。"""
+    import time as _t
+    now = _t.time() if now is None else float(now)
+    if timers.peek_pending():                 # 计时器到期 / 事件触发
+        return True
+    enabled, minutes = idle_settings()
+    last = last_activity_at()
+    quiet = bool(enabled and last and now - last >= minutes * TICK_SECONDS)
+    return quiet and not sleeping()           # 静默到期且醒着
+
+
 def idle_tick():
-    """醒来走一轮。调用方负责判断该不该醒。"""
+    """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
+    timers.tick_lock()
+    try:
+        body.observe()            # 先把对方这一轮做的事结算掉
+    except Exception as exc:      # noqa: BLE001
+        log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
     payload = core.context_assemble()
     chunks = []
-    run_with_tools(payload, lambda kind, value: chunks.append(value)
-                   if kind == "delta" else None)
-    reply = "".join(chunks).strip()
+    _, final_text = run_with_tools(
+        payload, lambda kind, value: chunks.append(value) if kind == "delta" else None)
+    reply = (final_text or "").strip()
     if reply:
-        core.append_session([{"role": "assistant", "content": reply}])
+        record = {"role": "assistant", "content": reply}
+        thought = getattr(run_with_tools, "reasoning", "") or ""
+        if thought:
+            record["reasoning_content"] = thought
+        core.append_session([record])
     return 1 if reply else 0
 
 
@@ -566,7 +583,7 @@ def state_snapshot():
     ch = timers.load_character()
     marks = {}
     try:
-        marks = json.loads((core.ROOT / "state" / "realTime" / "events.json")
+        marks = json.loads((_paths.data("realTime", "events.json"))
                            .read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         marks = {}
@@ -790,12 +807,7 @@ def idle_loop():
                     except Exception:            # noqa: BLE001
                         pass
 
-            pending = timers.peek_pending()
-            enabled, minutes = idle_settings()
-            last = last_activity_at()
-            quiet = (enabled and last and
-                     _time.time() - last >= minutes * TICK_SECONDS)
-            if pending or quiet:
+            if should_wake():
                 print("[wake]", "事件/计时" if pending else "静默", flush=True)
                 idle_tick()
         except Exception:                        # noqa: BLE001

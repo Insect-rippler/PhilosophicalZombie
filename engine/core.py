@@ -15,6 +15,15 @@
 
 from pathlib import Path
 import json
+import os
+import paths as _paths
+import tools as _tools
+
+try:
+    from trace import log
+except ImportError:
+    def log(*a, **k):
+        pass
 import re
 import subprocess
 import sys
@@ -24,9 +33,9 @@ chat_completions_url = "https://api.deepseek.com/chat/completions"
 
 ROOT = Path(__file__).resolve().parents[1]
 REALM_ROOT = ROOT / "ConsciousnessRealm"
-CFG_PATH = ROOT / "state" / "Philosophical.json"
+CFG_PATH = _paths.data("Philosophical.json")
 REGISTRY = ROOT / "function" / "function.json"
-SESSION_PATH = ROOT / "state" / "session" / "session.jsonl"
+SESSION_PATH = _paths.data("session", "session.jsonl")
 SKILL_PATH = REALM_ROOT / "skill" / "skill.json"
 
 # system 级段落，按顺序拼接
@@ -214,21 +223,6 @@ def loadSession(path=SESSION_PATH):
     return session
 
 
-def get_last_turns(session, n=QUERY_TURNS_LOOP):
-    """按 user 消息切轮，返回最后 n 轮。"""
-    start = None
-    count = 0
-    for i in range(len(session) - 1, -1, -1):
-        if session[i].get("role") == "user":
-            count += 1
-            if count == n:
-                start = i
-                break
-    if start is None:
-        start = next((i for i, m in enumerate(session) if m.get("role") == "user"), None)
-        if start is None:
-            return []
-    return session[start:]
 
 
 # 历史里的标签块不该进入检索查询
@@ -290,12 +284,6 @@ def search_text_make(session, user_message=None):
 
 # ---------------- 检索段落 ----------------
 
-def id_sort_key(item):
-    raw = str(item.get("id", ""))
-    m = re.match(r"^(.*?)-(\d+)$", raw)
-    if m:
-        return (m.group(1), int(m.group(2)))
-    return (raw, -1)
 
 
 _ROLE_TAG = re.compile(r"<(?:user|assistant|system)><([^>]*)>\s*")
@@ -348,11 +336,13 @@ def memory_recall(search_text, record=True):
     kept.sort(key=lambda h: (h["kind"] != "block", -h["score"]))
     kept = kept[:MEMORY_TOP_K + BLOCK_TOP_K]
 
-    if record and memory_lib is not None:
+    if record and memory_lib is not None and os.environ.get("PZ_TEST") != "1":
         try:
             memory_lib().record([{"id": h["id"], "chars": h["chars"]} for h in kept])
         except Exception as e:               # noqa: BLE001
             ERROR.append(f"[WARN] 命中计数失败：{type(e).__name__}: {e}")
+
+    log("memory_recall", query_chars=len(search_text or ""), hits=len(kept))
 
     blocks_kept = [h for h in kept if h["kind"] == "block"]
     slices_kept = [h for h in kept if h["kind"] == "slice"]
@@ -371,6 +361,7 @@ def lorebook_recall(search_text):
     if lorebook_lookup is None or not search_text:
         return ""
     try:
+        log("lorebook_recall", query_chars=len(search_text or ""))
         hits = lorebook_lookup(search_text, max_items=LOREBOOK_MAX_ITEMS,
                                budget_chars=LOREBOOK_BUDGET_CHARS)
     except Exception as e:                   # noqa: BLE001
@@ -461,9 +452,9 @@ def state_loading():
     metab = ch.get("metabolism") or {}
     if state.get("active") != "sleep":
         if float(metab.get("sleepiness", 0)) >= 92:
-            lines.append("该找个地方睡一觉了。")
+            lines.append("角色的困意已经到极限，继续下去会昏迷，该让她找地方睡。")
         elif LAST_PROMPT_TOKENS >= COMPRESSION_THRESHOLD * 0.9:
-            lines.append("脑子里堆的东西太多了，睡一觉会清爽些。")
+            lines.append("上下文占用接近上限，建议让她睡一觉触发记忆整理。")
     if LAST_PROMPT_TOKENS and LAST_PROMPT_TOKENS >= COMPRESSION_THRESHOLD:
         lines.append(COMPRESSION_NOTICE)
     return "<state>\n" + "\n".join(lines) + "\n</state>"
@@ -601,248 +592,40 @@ def plan_loading():
 
 MAX_TOOL_OUTPUT = _num("loop.maxToolOutput", 8000, int)   # 单个工具结果最多回灌多少字
 TOOL_TIMEOUT = _num("subprocess.timeout", 300, int)
+_tools.TOOL_TIMEOUT = TOOL_TIMEOUT
 
 
-VIRTUAL_TOOLS = {"active", "fight"}    # 不需要脚本、由代码直接处理的工具
 
 
-def load_registry():
-    """读 function.json，返回 {name: entry}。"""
-    try:
-        entries = json.loads(Path(REGISTRY).read_text(encoding="utf-8")).get("entries", [])
-    except (OSError, json.JSONDecodeError) as e:
-        ERROR.append(f"[ERROR] 工具注册表读取失败：{e}")
-        return {}
-    registry = {}
-    for e in entries:
-        name = e.get("name")
-        path = e.get("path")
-        if not name:
-            ERROR.append(f"[WARN] 工具条目缺少 name，已跳过：{e}")
-            continue
-        if not path and name not in VIRTUAL_TOOLS:
-            ERROR.append(f"[WARN] 工具条目缺少 path，已跳过：{name}")
-            continue
-        registry[name] = e
-    return registry
+TOOL_PATHS = {}          # {工具名: 脚本相对路径}，执行时用
 
 
-def build_tools(registry):
-    """注册表 → chat/completions 的 tools 数组（去掉 path 这类本地字段）。"""
-    tools = []
-    for name, e in registry.items():
-        fn = {"name": name}
-        if e.get("description"):
-            fn["description"] = e["description"]
-        if e.get("parameters"):
-            fn["parameters"] = e["parameters"]
-        tools.append({"type": "function", "function": fn})
-    return tools
 
 
-def virtual_fight(raw_args):
-    """回合制战斗。action=start 开打，action=act 走一回合。"""
-    try:
-        from engine import combat
-    except Exception as e:                   # noqa: BLE001
-        return json.dumps({"ok": False, "reason": f"战斗模块不可用：{type(e).__name__}"},
-                          ensure_ascii=False)
-    try:
-        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
-    except json.JSONDecodeError:
-        return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
-
-    action = str(args.get("action") or "").lower()
-    if action == "start":
-        from engine import commissions as commissions_mod
-        cid = str(args.get("commission") or "").strip()
-        enemy_id = str(args.get("enemy") or "").strip()
-        if cid and not enemy_id:
-            item = next((c for c in commissions_mod.active_commissions()
-                         if c.get("id") == cid), None)
-            if not item:
-                # 也可能是委托模板 id：现接现打，顺手把单子记下来
-                item = commissions_mod.accept(cid)
-                if item:
-                    cid = item["id"]
-            if not item:
-                return json.dumps({"ok": False, "reason": f"没有这张委托：{cid}"},
-                                  ensure_ascii=False)
-            enemy_id = item.get("enemy") or ""
-        enemies = combat.load_enemies()
-        if enemy_id not in enemies:
-            return json.dumps({"ok": False, "reason": f"没有这个敌人：{enemy_id}",
-                               "known": list(enemies)}, ensure_ascii=False)
-        battle = combat.new_battle(combat.load_character_pack(), enemies[enemy_id])
-        if cid:
-            battle["commission"] = cid
-        combat.save(battle)
-        return json.dumps({"ok": True, "commission": cid or None,
-                           **combat.status(battle)}, ensure_ascii=False)
-
-    battle = combat.load()
-    if not battle or battle.get("over"):
-        return json.dumps({"ok": False, "reason": "现在没有进行中的战斗"}, ensure_ascii=False)
-
-    if action == "heal":
-        log, ok = combat.heal(battle)
-        combat.save(battle)
-        return json.dumps({"ok": ok, "log": log, **combat.status(battle)}, ensure_ascii=False)
-
-    if action == "rescue":
-        battle = combat.rescue(battle)
-        applied = combat.apply_result(battle)
-        combat.clear()
-        return json.dumps({"ok": True, "result": battle["result"], "log": battle["log"][-1:],
-                           "applied": applied, **combat.status(battle)}, ensure_ascii=False)
-
-    if combat.is_critical(battle):
-        return json.dumps({"ok": False, "critical": True,
-                           "reason": "她伤得太重，撑不住了——先处理伤口（heal）或者撤（rescue）",
-                           **combat.status(battle)}, ensure_ascii=False)
-
-    skill = str(args.get("skill") or "").strip() or None
-    battle, log = combat.act(battle, skill)
-    result = {"ok": True, "log": log, **combat.status(battle)}
-    if battle["over"]:
-        result["applied"] = combat.apply_result(battle)
-        if battle["result"] == "win":
-            try:
-                from engine import commissions as commissions_mod
-                cid = str(battle.get("commission") or "")
-                item = next((c for c in commissions_mod.active_commissions()
-                             if c.get("id") == cid), None) or commissions_mod.current()
-                if item:
-                    commissions_mod.finish(item["id"])
-                    result["commission"] = {"id": item["id"], "title": item.get("title"),
-                                            "done": True,
-                                            "rewardText": item.get("rewardText") or ""}
-            except Exception as e:           # noqa: BLE001
-                ERROR.append(f"[WARN] 委托结算失败：{type(e).__name__}: {e}")
-        combat.clear()
-    else:
-        combat.save(battle)
-    return json.dumps(result, ensure_ascii=False)
 
 
-def virtual_active(raw_args):
-    """主代理声明一个持续动作：交给 body 判定并挂计时器。"""
-    try:
-        import engine.body as body
-    except Exception as e:                   # noqa: BLE001
-        return json.dumps({"ok": False, "reason": f"body 不可用：{type(e).__name__}"},
-                          ensure_ascii=False)
-    try:
-        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
-    except json.JSONDecodeError:
-        return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
-
-    description = str(args.get("description") or "").strip()
-    if not description:
-        return json.dumps({"ok": False, "reason": "缺少 description"}, ensure_ascii=False)
-    slot = "long" if str(args.get("slot") or "short").lower() == "long" else "short"
-    force = bool(args.get("force"))
-
-    receipt = body.commit(description, slot, force=force, appeal=args.get("appeal"))
-    if not receipt.get("ok") and receipt.get("degraded"):
-        ERROR.append(f"[WARN] body 判定失败：{receipt.get('reason')}")
-    return json.dumps(receipt, ensure_ascii=False)
 
 
-def execute_tool_call(call, registry):
-    """执行一次 tool_call，返回回灌给模型的文本。
-
-    工具约定：stdin 收 JSON 参数，stdout 打 JSON 结果，非 0 退出视为失败。
-    失败信息也要回灌——让模型知道发生了什么，而不是静默重试。
-    """
-    fn = call.get("function") or {}
-    name = fn.get("name") or ""
-    raw_args = fn.get("arguments") or "{}"
-
-    if name == "active":                     # virtual：交给 body 判定，不执行脚本
-        return virtual_active(raw_args)
-    if name == "fight":                      # virtual：回合制战斗
-        return virtual_fight(raw_args)
-
-    entry = registry.get(name)
-    if not entry:
-        return f"[工具不存在] {name}"
-
-    script = (ROOT / entry["path"]).resolve()
-    if not script.exists():
-        return f"[工具脚本缺失] {script}"
-    if ROOT not in script.parents:
-        return f"[拒绝执行] 脚本不在项目内：{script}"
-
-    try:
-        proc = subprocess.run(
-            [sys.executable, str(script)],
-            input=raw_args, capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            cwd=str(ROOT), timeout=TOOL_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        return f"[超时] {name} 超过 {TOOL_TIMEOUT} 秒未返回"
-    except OSError as e:
-        return f"[启动失败] {name}: {e}"
-
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
-    if proc.returncode != 0:
-        text = err or out or f"exit {proc.returncode}"
-        return f"[失败 exit={proc.returncode}] {text}"
-    return (out or err or "(无输出)")[:MAX_TOOL_OUTPUT]
 
 
-def tool_messages(tool_calls, registry):
-    """把 tool_calls 逐个执行，组装成 role=tool 的消息列表。"""
-    results = []
-    for call in tool_calls:
-        content = execute_tool_call(call, registry)
-        results.append({
-            "role": "tool",
-            "tool_call_id": call.get("id", ""),
-            "content": content[:MAX_TOOL_OUTPUT],
-        })
-    return results
+
+
+
+
+
+
+
+
 
 
 SUMMARY_TOOL = "sessionSummary"
 SUMMARY_PLACEHOLDER = "（摘要已写入 session 首条提要，此处不再重复）"
 
 
-def strip_summary_args(calls):
-    """压缩工具的 arguments 就是整份摘要，落盘前换成占位符，避免与提要重复。"""
-    out = []
-    for call in calls:
-        call = dict(call)
-        fn = dict(call.get("function") or {})
-        if fn.get("name") == SUMMARY_TOOL:
-            fn["arguments"] = json.dumps({"content": SUMMARY_PLACEHOLDER}, ensure_ascii=False)
-        call["function"] = fn
-        out.append(call)
-    return out
 
 
-def should_loop(response):
-    """这一轮要不要继续：以有 tool_calls 为准，finish_reason 兜底。"""
-    choice = ((response or {}).get("choices") or [{}])[0]
-    if (choice.get("message") or {}).get("tool_calls"):
-        return True
-    return choice.get("finish_reason") == "tool_calls"
 
 
-def tool_turn_messages(response, registry):
-    """把这一轮的工具调用执行掉，返回要写进 session 的消息（assistant + 每条 tool）。"""
-    choice = ((response or {}).get("choices") or [{}])[0]
-    message = choice.get("message") or {}
-    calls = message.get("tool_calls") or []
-    if not calls:
-        return [{"role": "assistant", "content": message.get("content") or ""}]
-    results = tool_messages(calls, registry)          # 先按原文执行
-    assistant = {"role": "assistant", "content": message.get("content") or "",
-                 "tool_calls": strip_summary_args(calls)}   # 再按占位符落盘
-    return [assistant] + results
 
 
 def append_session(messages, path=SESSION_PATH):
@@ -960,7 +743,11 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     MESSAGES.extend(blocks)                  # 检索块原样复用，不重新算
 
     if user_message and user_message.get("content"):
-        MESSAGES.append(user_message)        # 本轮 message，永远排在最后
+        wrapped = dict(user_message)
+        text = content_text(wrapped.get("content"))
+        wrapped["content"] = (f"<user>\n{text}\n</user>"
+                              if text.strip() else wrapped.get("content"))
+        MESSAGES.append(wrapped)             # 本轮真人发言，用 <user> 标出来
 
     # 本地图片路径 → Files API 的 file_id（会话里存的是路径，发出去必须是 file 块）
     if clean_images is not None and any(isinstance(m.get("content"), list) for m in MESSAGES):
@@ -969,8 +756,8 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
         for issue in image_issues:
             ERROR.append(f"[WARN] 图片上传失败 {issue}")
 
-    registry = load_registry()
-    tools = build_tools(registry)
+    registry = _tools.load_registry()
+    tools = _tools.build_tools(registry)
 
     assembled = dict(payload)
     assembled["messages"] = MESSAGES
@@ -986,7 +773,7 @@ LOOP_MAX = _num("loop.maxRounds", 8, int)   # 一轮里最多几次「模型→�
 
 # ---------------- usage ----------------
 
-USAGE_DIR = ROOT / "state" / "usage"
+USAGE_DIR = _paths.data("usage")
 COMPRESSION_THRESHOLD = int(
     (harness.get("session") or {}).get("compressionThreshold") or 340000
 )
@@ -1055,7 +842,7 @@ def record_usage(usage, *, turn_id="", round_no=0, speaker=""):
 
 DEBUG_DUMP = bool(harness_cfg("debug.dump", False))
 DEBUG_DUMP_TAIL = bool(harness_cfg("debug.dumpTail", False))
-DUMP_DIR = ROOT / "state" / "tmp" / "payload"
+DUMP_DIR = _paths.data("tmp", "payload")
 BLOCK_NAMES = {"memory", "lorebook", "skill", "state", "plan"}
 
 
@@ -1133,7 +920,7 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     message = next((a for a in argv if not a.startswith("-")), None)
     record = "--no-record" not in argv      # 默认累计命中次数；调试时用 --no-record
-    registry = load_registry()
+    registry = _tools.load_registry()
 
     # 检索一轮只做一次：工具循环的后续轮次复用同一份块，
     # 否则每轮都会重新检索，命中次数会被重复累加。

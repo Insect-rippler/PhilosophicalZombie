@@ -1,19 +1,26 @@
 {
-  "_doc": "槽位表：代码只认 id，容量由数据决定。身体只有一个——同一时刻只能做一件占身的事（移动、做饭、洗澡、睡觉）。秒级且不移动的动作不进槽，直接生效。",
+  "_doc": "槽位表：short / long / event 三者独立；alarm 单独一槽，只放闹钟。",
   "slots": [
     {
-      "id": "active",
+      "id": "short",
       "kind": "action",
       "capacity": 1,
-      "label": "身体",
-      "description": "占身的事：移动、做饭、洗澡、练剑、睡觉。同一时刻只能有一件。"
+      "label": "小动作",
+      "description": "几十秒内做完的事：起身、推门、递东西、换个握法。做完立刻腾出来。"
+    },
+    {
+      "id": "long",
+      "kind": "action",
+      "capacity": 1,
+      "label": "持续动作",
+      "description": "要花几分钟到几小时、身体腾不出来的事：做饭、打铁、赶路、洗澡。"
     },
     {
       "id": "event",
       "kind": "action",
       "capacity": 1,
-      "label": "事件",
-      "description": "大块的事：打一天铁、出趟远门、睡一觉。一件占满事件槽，做完再唤醒。"
+      "label": "整段事件",
+      "description": "交给时间的一段连续劳动：打一整天铁、守夜到天亮、出趟远门。中途不打断。"
     },
     {
       "id": "event.random",
@@ -32,6 +39,13 @@
       "kind": "goal",
       "capacity": 1,
       "label": "长目标"
+    },
+    {
+      "id": "alarm",
+      "kind": "alarm",
+      "capacity": 1,
+      "label": "闹钟",
+      "description": "到点叫醒自己的计时器，与睡不睡无关。"
     }
   ]
 }

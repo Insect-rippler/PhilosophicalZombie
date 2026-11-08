@@ -10,11 +10,12 @@
 """
 
 import json
+import paths as _paths
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / "state" / "realTime" / "reminders.json"
+STATE = _paths.data("realTime", "reminders.json")
 WORLD = ROOT / "ConsciousnessRealm" / "world"
 
 from engine import timers
@@ -47,7 +48,7 @@ def load_rules():
     return [r for r in (data.get("reminders") or []) if isinstance(r, dict)]
 
 
-EVENTS_STATE = ROOT / "state" / "realTime" / "events.json"
+EVENTS_STATE = _paths.data("realTime", "events.json")
 
 
 def _idle_hours(now):

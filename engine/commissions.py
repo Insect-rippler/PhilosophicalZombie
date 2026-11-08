@@ -5,12 +5,13 @@
 """
 
 import json
+import paths as _paths
 import random
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / "state" / "realTime" / "commissions.json"
+STATE = _paths.data("realTime", "commissions.json")
 WORLD = ROOT / "ConsciousnessRealm" / "world"
 
 from engine import combat

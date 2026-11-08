@@ -8,13 +8,14 @@
 """
 
 import json
+import paths as _paths
 import random
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORLD = ROOT / "ConsciousnessRealm" / "world"
-STATE = ROOT / "state" / "realTime" / "battle.json"
+STATE = _paths.data("realTime", "battle.json")
 
 MAX_ROUNDS = 25      # 兜底上限，真正的约束是敌人的血量
 

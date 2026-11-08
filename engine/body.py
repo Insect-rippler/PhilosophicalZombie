@@ -9,6 +9,13 @@ realm 全在 `ConsciousnessRealm/body/`：`rule.md` 说它是谁，`judge.json` 
 """
 
 import json
+import paths as _paths
+
+try:
+    from trace import log
+except ImportError:
+    def log(*a, **k):
+        pass
 import random
 import re
 import sys
@@ -28,11 +35,11 @@ SHORT_LIMIT = 1          # short 槽的单件事上限（分钟）
 MAX_MINUTES = 720
 METAB_KEYS = {"hp", "health", "bodyTemperature", "satiety", "hydration",
               "fatigue", "sleepiness", "sexualDesire"}
-EMOTION_KEYS = {"favor", "trust", "possessiveness", "unease"}
+EMOTION_KEYS = {"emotion"}
 # 单次判定的合理幅度，防止模型给出夸张数字
 REWARD_LIMIT = {"bodyTemperature": 3, "hp": 60, "health": 40}
 REWARD_LIMIT_DEFAULT = 60
-EMOTION_LIMIT = 12
+EMOTION_LIMIT = 36
 
 
 WORLD_DIR = REALM.parent / "world"
@@ -102,24 +109,6 @@ def available_activities(ch, limit=6):
     return rows[:limit]
 
 
-def slot_status(ch):
-    """给模型看的槽位占用情况。"""
-    now = time.time()
-    lines = []
-    for sid, label in (("active.short", "短动作"), ("active.long", "长动作")):
-        running = [t for t in timers.load_timers()
-                   if t.get("kind") == "action"
-                   and (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == sid
-                   and float(t.get("at") or 0) > now]
-        if running:
-            t = running[0]
-            left = max(0, (float(t.get("at") or 0) - now) / 60)
-            lines.append(f"{label}：占用中（正{('在' + str(t.get('semantic') or '')) if t.get('semantic') else '在做别的事'}，还有 {left:.0f} 分钟）")
-        else:
-            lines.append(f"{label}：空闲")
-    return "\n".join(lines)
-
-
 def load_realm():
     rule = RULE.read_text(encoding="utf-8") if RULE.exists() else ""
     sections = []
@@ -135,24 +124,8 @@ def load_realm():
 
 
 def state_snapshot(ch=None):
-    """给 body 看的当前状态。这里给数字，它需要精确判断。"""
-    ch = ch if isinstance(ch, dict) else timers.load_character()
-    metab = ch.get("metabolism") or {}
-    emo = ch.get("emotion") or {}
-    state = ch.get("state") or {}
-    lines = [
-        f"时间：{time.strftime('%Y-%m-%d %H:%M')}",
-        f"位置：{ch.get('local') or '未知'}",
-        f"睡眠状态：{'睡着' if state.get('active') == 'sleep' else '醒着'}",
-        "生理：" + "、".join(f"{k}={v}" for k, v in metab.items() if isinstance(v, (int, float))),
-        "情绪：" + "、".join(f"{k}={v}" for k, v in emo.items() if isinstance(v, (int, float))),
-    ]
-    recent = [t for t in timers.load_timers() if t.get("kind") == "action"]
-    if recent:
-        lines.append("正在进行的计时器：" + "；".join(
-            f"{t.get('semantic', '')}（{max(0, (float(t.get('at') or 0) - time.time()) / 60):.0f} 分钟后完成）"
-            for t in recent[:3]))
-    return "\n".join(lines)
+    """给 body 看的完整状态：与主代理同源，只是不省略正常项。"""
+    return "\n".join(timers.render_state(ch, full=True))
 
 
 def _parse(text):
@@ -200,7 +173,7 @@ def _activity_lines(ch):
 
 def recent_context(limit=6):
     """最近几条言行，给 body 判断「这一步属于哪件事」。"""
-    path = Path(__file__).resolve().parents[1] / "state" / "session" / "session.jsonl"
+    path = _paths.data("session", "session.jsonl")
     try:
         rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
     except (OSError, json.JSONDecodeError):
@@ -208,6 +181,11 @@ def recent_context(limit=6):
     lines = []
     for r in rows[-40:]:
         role = r.get("role")
+        if role == "user":
+            text = (r.get("content") or "").strip()
+            if text:
+                lines.append(f"- 对方：{text.replace(chr(10), ' ')[:80]}")
+            continue
         if role == "assistant":
             for c in (r.get("tool_calls") or []):
                 f = c.get("function") or {}
@@ -225,6 +203,143 @@ def recent_context(limit=6):
                 lines.append(f"- 说：{text.replace(chr(10), ' ')[:80]}")
     return "\n".join(lines[-limit:])
 
+def _body_thinking():
+    """body 是否开思考：读 harness.body.thinking，默认关。"""
+    import core
+    try:
+        return bool((core.harness.get("body") or {}).get("thinking", False))
+    except Exception:                        # noqa: BLE001
+        return False
+
+
+SLOT_CAP = {"short": 5.0, "long": 180.0, "event": 480.0}   # 分钟
+
+
+EFFORT_RATE = {"轻": 4.0, "中": 8.0, "重": 16.0}   # 每小时疲惫
+EFFORT_DEFAULT = 8.0
+
+
+def effort_rate(level):
+    return EFFORT_RATE.get(str(level or "").strip(), EFFORT_DEFAULT)
+
+
+def _body_block(ch, sleep=False):
+    """按生理阶段判断还能不能动。返回拒绝理由，空串表示可以。
+
+    这些是硬状态，不该交给模型猜：困到极限、累垮、身体很差。
+    """
+    if sleep:
+        return ""
+    metab = ch.get("metabolism") or {}
+    # 困意不挡行动：困到极限由概率昏迷接管，不该逼她随便躺下。
+    # 疲劳可以挡——闲着它自己会降。
+    checks = (
+        ("fatigue", "撑不住", "身上没力气了，动不了"),
+    )
+    for key, band, why in checks:
+        name, _ = timers.stage_of(key, metab.get(key, 0))
+        if name == band:
+            return why
+    return ""
+
+
+def _reject_text(busy, fallback="", now=None):
+    """拒绝的正文（不含「动作未受理：」前缀）。"""
+    now = time.time() if now is None else float(now)
+    if busy:
+        entry = busy[0]
+        at = float(entry.get("at") or 0)
+        left = max(0.0, at - now)
+        doing = str(entry.get("semantic") or entry.get("text") or "").strip().rstrip("。")
+        ends = time.strftime("%H:%M", time.localtime(at or now))
+        return (f"身体正忙着「{doing}」，还剩 {human_left_sec(left)}（{ends} 结束）。"
+                f"想立刻改做别的就带 force；想等就以一句正文结束这一轮。")
+    return fallback or "这会儿做不了。"
+
+
+def _reject(busy=None, fallback="", now=None):
+    """统一的拒绝回执。前缀只在这里加一次。"""
+    return {"未执行": f"动作未受理：{_reject_text(busy or [], fallback, now)}",
+            "ok": False, "allow": False}
+
+
+OBSERVE_RULES = """
+
+# 对方对她做了什么
+
+读最近几条对话，只看**对方（user）**这一轮做了什么、说了什么，判断落多少数值。
+她自己做了什么不在这里结算。
+
+| 对方的行为 | 数值 |
+|---|---|
+| 打、推、掐、烫、拉拽 | hp −12 ~ −30，health −6 ~ −14，emotion −14 ~ −20 |
+| 撕毁、抢走、弄坏她在意的东西 | emotion −14 ~ −20 |
+| 当众羞辱、诬蔑、骂她 | emotion −10 ~ −16 |
+| 冷落、敷衍、不信她 | emotion −4 ~ −8 |
+| 真的帮了忙、带了东西、替她做了事 | emotion +6 ~ +10 |
+| 示爱、珍视、久别重逢 | emotion +8 ~ +14 |
+| 只是聊天、客套、问候、互相客气 | **不给任何字段** |
+| 夸她手艺，说得具体、听得出来是真看过 | emotion +2 ~ +4 |
+
+**话不算数，事才算数。** 一句好听的话不该比一次实际的帮忙更重。
+
+输出 JSON：{"hp":0,"health":0,"emotion":0,"text":"一句话描述她此刻的身体/情绪反应"}
+- 只给真正要变的字段；不变就省略。
+- text 是给主代理看的第三人称陈述，20 字以内。
+"""
+
+
+def observe():
+    """看对方最近一轮做了什么，把伤害或情绪落到她的状态上。只结算一次。"""
+    import core
+    rows = []
+    path = _paths.data("session", "session.jsonl")
+    try:
+        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    except (OSError, json.JSONDecodeError):
+        return None
+    last_user = next((r for r in reversed(rows) if r.get("role") == "user"), None)
+    if not last_user:
+        return None
+    body_text = str(last_user.get("content") or "")
+    stamp = f"{len(rows)}:{hash(body_text) & 0xffff:x}"
+    ch = timers.load_character()
+    state = ch.setdefault("state", {})
+    if stamp and state.get("lastObserved") == stamp:
+        return None
+
+    rule, judge_rules = load_realm()
+    system = (f"{rule}\n\n{judge_rules}\n{OBSERVE_RULES}\n\n"
+              f"## 最近的言行\n\n{recent_context(8)}\n\n"
+              f"## 她现在的状态\n\n{state_snapshot(ch)}")
+    payload = {
+        "model": core.payload.get("model"),
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": "据此判断对方这一轮对她造成了什么。"}],
+        "temperature": 0.2,
+        "thinking": {"type": "disabled"},
+        "response_format": {"type": "json_object"},
+        "max_tokens": 600,
+    }
+    data = core.send(payload) or {}
+    content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    if not content:
+        log("observe.empty")
+        return None
+    verdict = _parse(content) or {}
+    delta = {k: float(verdict[k]) for k in ("hp", "health", "emotion")
+             if isinstance(verdict.get(k), (int, float)) and not isinstance(verdict.get(k), bool)}
+    if delta:
+        applied = timers._apply_reward(ch, delta)
+        log("observe", applied=applied, text=str(verdict.get("text") or "")[:40])
+    else:
+        applied = {}
+    if stamp:
+        state["lastObserved"] = stamp
+    timers._write(timers.CHARACTER, ch)
+    return applied or None
+
+
 def judge(description, ch=None, force=False, appeal=None):
     """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
 
@@ -235,9 +350,12 @@ def judge(description, ch=None, force=False, appeal=None):
     ch = ch if isinstance(ch, dict) else timers.load_character()
     rule, judge_rules = load_realm()
     system = (f"{rule}\n\n# 判定标准\n\n{judge_rules}\n\n"
-              "输出 JSON：{\"allow\":true/false, \"reason\":\"做不了时的原因\", "
-              "\"duration\":分钟数, \"location\":\"做完之后的位置，没动就省略\", "
-              "\"reward\":{\"satiety\":0}, \"text\":\"到点后显示的一句话\"}")
+
+              "输出 JSON：{\"allow\":true/false, \"reason\":\"做不了时的原因（allow 为 false 时必须写清，不能为空）\", "
+              "\"duration\":分钟数, \"effort\":\"轻|中|重\", "
+              "\"location\":\"只有她明显转移到新地点时才填（如「奥格尼斯科/她的房间」），"
+              "原地的小动作一律留空字符串\", "
+              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"sleeping\":false, \"text\":\"到点后显示的一句话\"}")
     appeal_text = ""
     if isinstance(appeal, dict) and appeal:
         appeal_text = (f"## 她的申辩\n\n理由：{appeal.get('reason')}；"
@@ -246,18 +364,18 @@ def judge(description, ch=None, force=False, appeal=None):
 
     user = (
         f"## 当前状态\n\n{state_snapshot(ch)}\n\n"
-        f"## 槽位占用\n\n{slot_status(ch)}\n\n"
+
         f"## 地图\n\n{map_lines(ch)}\n\n"
         f"## 可参考的活动（时长来自数据表，别脱离这个量级）\n\n{_activity_lines(ch)}\n\n"
         f"## 最近的言行\n\n{recent_context()}\n\n"
         + appeal_text
         + f"## 她要做的事\n\n{description}\n\n"
         "时长优先取活动表里的值；表里没有的按常识给，但不要离谱。"
-        "槽位已满时，只有在一分钟内能做完的事才允许继续，其余一律拒绝。"
+        "槽位由代码管，你不用判。"
     )
     if force:
         user += ("\n\n## 强制打断\n主代理要求打断她手上正在做的事，改做上面这件。"
-                 "槽位占用不算阻碍，按新动作判定即可；身体条件不够仍然可以拒绝。")
+                 "按新动作判定即可；身体条件不够仍然可以拒绝。")
 
     body = {
         "model": core.payload.get("model"),
@@ -265,18 +383,20 @@ def judge(description, ch=None, force=False, appeal=None):
                      {"role": "user", "content": user}],
         "max_tokens": 600,
         "temperature": 0.2,
-        "thinking": {"type": "disabled"},
+        "thinking": {"type": "enabled" if _body_thinking() else "disabled"},
         "response_format": {"type": "json_object"},
     }
     response = core.send(body)
     if not response:
         return None
     content = ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    log("judge.raw", chars=len(content), head=content[:200])
     data = _parse(content)
     if not isinstance(data, dict):
         return None
 
     allow = bool(data.get("allow", False))
+    sleeping = bool(data.get("sleeping", False))
     reason = str(data.get("reason") or "").strip()[:60]
     try:
         duration = float(data.get("duration") or 0)      # 不能取整，7 秒是 0.12 分钟
@@ -296,8 +416,26 @@ def judge(description, ch=None, force=False, appeal=None):
                       f"请改用 slot={'long' if declared == 'short' else 'long'}，"
                       f"确实要强制就带 force")
 
-    slot_id = timers.slot_id_for()
+    log("judge", desc=description[:60], allow=allow, minutes=duration,
+        force=force, instant=instant, reason=reason[:50],
+        busy=len([t for t in timers.load_timers()
+                  if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]))
 
+    if duration > 60:                        # 判超过一小时，记一笔便于排查
+        try:
+            import json as _json
+            long_log = _paths.data("tmp", "body_long.jsonl")
+            long_log.parent.mkdir(parents=True, exist_ok=True)
+            with long_log.open("a", encoding="utf-8") as handle:
+                handle.write(_json.dumps({"ts": time.strftime("%H:%M:%S"),
+                                          "minutes": duration,
+                                          "allow": allow,
+                                          "description": description},
+                                         ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    effort = str(data.get("effort") or "").strip()
     location = str(data.get("location") or "").strip()
 
     # 地图外：没有具体位置，行路时间按 30~90 分钟抽一个数
@@ -307,50 +445,15 @@ def judge(description, ch=None, force=False, appeal=None):
         duration = max(duration, random.randint(30, 90))
     text = str(data.get("text") or "").strip()
 
-    # 事件槽联动：正在做一件大事时，另起炉灶要先说清代价
-    if allow and not force and slot != "event":
-        running = [t for t in timers.load_timers()
-                   if t.get("slotId") == "event" and float(t.get("at") or 0) > time.time()]
-        if running and duration >= 10:
-            doing = str(running[0].get("semantic") or running[0].get("text") or "").lstrip("她")
-            left = max(1, int((float(running[0]["at"]) - time.time()) // 3600))
-            allow = False
-            reason = (f"她正忙着：{doing}，还要约 {left} 小时。"
-                      f"现在做这个会打断那件事，已经做的那段就作废了。"
-                      f"确实要改主意，就带 force 重递")
-
-    if allow and not force and not instant:
-        ok, why = timers.can_take(slot_id)
-        if not ok:
-            busy = [t for t in timers.load_timers()
-                    if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]
-            doing = str(busy[0].get("semantic") or "").lstrip("她") if busy else ""
-            left_sec = 0.0
-            elapsed_sec = 0.0
-            if busy:
-                left_sec = max(0.0, float(busy[0].get("at") or 0) - time.time())
-                started = float(busy[0].get("createdAt") or busy[0].get("at") or 0)
-                if started:
-                    elapsed_sec = max(0.0, time.time() - started)
-            allow = False
-            if doing:
-                reason = (
-                    f"动作未受理：她手上的事还没完（{doing}），"
-                    f"已进行 {human_left_sec(elapsed_sec)}，还剩 {human_left_sec(left_sec)}。"
-                    f"当前正执行的动作结束前，非 force 模式下不会接受任何（short/long）类型动作；"
-                    f"若剩余时间小于 3s 且角色有必要执行新动作则可尝试递交新动作，"
-                    f"否则以一句话收尾，或以 force 模式强制结束当前动作以执行有必要的新动作。"
-                )
-            else:
-                reason = f"动作未受理：槽位被占着（{why}）。等它结束，或用 force 替换"
-
     return {
         "allow": allow,
         "reason": reason,
         "duration": duration,
         "instant": instant,
+        "sleeping": sleeping,
+        "effort": effort,
         "slot": slot,
-        "slotId": slot_id,
+        "slotId": timers.slot_id_for(slot),
         "location": location,
         "reward": _clean_reward(data.get("reward")),
         "text": text,
@@ -359,64 +462,151 @@ def judge(description, ch=None, force=False, appeal=None):
 
 
 def human_left_sec(seconds):
-    seconds = max(0.0, float(seconds))
-    if seconds < 60:
-        return f"{int(round(seconds))} 秒"
-    return f"{int(seconds // 60)} 分 {int(round(seconds % 60))} 秒"
-
-
-NEXT_STEP = ("接下来可以做两件事之一：结束这一轮（一句话收尾，或什么都不说），"
-             "或者递交下一步动作。")
-
-
-def human_left(minutes):
-    total = int(round(float(minutes) * 60))
+    total = int(round(max(0.0, float(seconds))))
     if total < 60:
         return f"{total} 秒"
     return f"{total // 60} 分 {total % 60} 秒"
 
-def commit(description, slot="short", *, ch=None, force=False, appeal=None):
+
+NEXT_STEP = ("接下来可以做两件事之一：结束这一轮（一句话收尾，或什么都不说）等待动作结束，"
+             "或者以 force 模式递交新动作。")
+
+
+
+def _alarm_minutes(text, now=None):
+    """把闹钟解析成分钟数。支持 "06:15"、"1:06:15"（1 = 明天）。"""
+    raw = str(text or "").strip().replace("：", ":")
+    parts = [p for p in raw.split(":") if p != ""]
+    if not parts:
+        return None
+    day = None
+    if len(parts) == 3:                 # D:HH:MM
+        try:
+            day = int(parts[0])
+            hour, minute = int(parts[1]), int(parts[2])
+        except ValueError:
+            return None
+    elif len(parts) == 2:               # HH:MM
+        try:
+            hour, minute = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+    else:
+        return None
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        return None
+    now = time.time() if now is None else float(now)
+    stamp = time.localtime(now)
+    target = time.mktime((stamp.tm_year, stamp.tm_mon, stamp.tm_mday,
+                          hour, minute, 0, 0, 0, -1))
+    if day is None:
+        if target <= now:
+            target += 24 * 3600         # 没写天：取下一个该时刻
+    elif day == 0:
+        if target < now:
+            return None                 # 今天这个点已经过了，说明写法有误
+    else:
+        target += 24 * 3600 * max(1, day)
+    return (target - now) / 60.0
+
+
+def commit(description, slot="short", *, ch=None, force=False, appeal=None, sleep=None,
+           line=None, location=None, emotion_break=False):
     """判定 + 建计时器，返回给主代理的回执。
 
     slot 参数只是主代理的建议，实际用哪个槽位由 body 按时长决定。
     """
-    ch = ch if isinstance(ch, dict) else timers.load_character()
+    snap = timers.snapshot()             # 结算 + 时间 + 角色，一次取齐
+    if emotion_break:
+        ch_break = snap["ch"]
+        ch_break.setdefault("state", {})["emotionBreakPending"] = True
+        timers._write(timers.CHARACTER, ch_break)
+    ch = ch if isinstance(ch, dict) else snap["ch"]
+    now = snap["now"]
+    target_slot = timers.slot_id_for(slot)
+    busy = [t for t in timers.blocking_entries(now, grace=0)
+            if (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == target_slot]
+    if busy and not force:
+        if isinstance(appeal, dict) and appeal.get("reason"):
+            target = busy[0]
+            second = judge(str(target.get("text") or description), ch=ch, appeal=appeal)
+            want = float((second or {}).get("duration") or 0)
+            if second and want > 0:
+                new_at = now + want * 60
+                if new_at < float(target["at"]):
+                    entries = timers.load_timers()
+                    for item in entries:
+                        if item.get("id") == target.get("id"):
+                            item["at"] = new_at
+                    timers.save_timers(entries)
+                    return {"已调整": (f"已采纳申辩：{target.get('semantic') or ''} "
+                                      f"改为约 {human_left_sec(want * 60)}后完成。"),
+                            "ok": True, "allow": True}
+        return _reject(busy, now=now)
+
+    if (ch.get("state") or {}).get("active") == "sleep" and not sleep:
+        return {"未执行": "动作未受理：她正在睡，叫醒之前做不了别的事。",
+                "ok": False, "allow": False}
+
+    blocked = _body_block(ch, sleep=bool(sleep))
+    if blocked:
+        return {"未执行": f"动作未受理：{blocked}。", "ok": False, "allow": False}
+
     verdict = judge(description, ch=ch, force=force, appeal=appeal)
+    if verdict is not None and str(slot or "").strip() in ("short", "long", "event"):
+        verdict["slot"] = str(slot).strip()          # 槽位由递交方决定，body 只判时长
+        verdict["slotId"] = timers.slot_id_for(verdict["slot"])
+        cap = SLOT_CAP.get(verdict["slot"], 180.0)
+        verdict["duration"] = min(float(verdict.get("duration") or 0), cap)
+    if verdict is not None and sleep:
+        alarm = _alarm_minutes(sleep)
+        if alarm:
+            verdict["sleeping"] = True
+            verdict["duration"] = min(alarm, 1440.0)
+            log("alarm.set", at=str(sleep), minutes=round(alarm), desc=description[:32])
+        elif str(sleep).strip().lower() in ("true", "1", "yes"):
+            verdict["sleeping"] = True            # 只说“要睡”，时长交给 body
     if verdict is None:
         return {"ok": False, "reason": "判定失败：body 没有返回可解析的结果", "degraded": True}
 
     if not verdict["allow"]:
-        if isinstance(appeal, dict) and appeal.get("reason"):
-            busy = [t for t in timers.load_timers()
-                    if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]
-            if busy:
-                target = busy[0]
-                second = judge(str(target.get("text") or description), ch=ch,
-                               appeal=appeal)
-                want = float((second or {}).get("duration") or 0)
-                if second and want > 0:
-                    new_at = time.time() + want * 60
-                    if new_at < float(target["at"]):
-                        entries = timers.load_timers()
-                        for e in entries:
-                            if e is target or e.get("id") == target.get("id"):
-                                e["at"] = new_at
-                        timers.save_timers(entries)
-                        return {"已调整": (f"已采纳申辩：{target.get('semantic') or ''} "
-                                          f"改为约 {human_left_sec(want * 60)}后完成。"),
-                                "ok": True, "allow": True}
-        return {"未执行": f"递交未受理：{verdict['reason'] or '身体条件不允许'}",
-                "ok": False, "allow": False,
-                "reason": verdict["reason"] or "身体条件不允许"}
+        return _reject(None, verdict["reason"] or "她现在的状态做不了这件事")
 
     if not verdict["text"]:
         verdict["text"] = f"{description}（完成）"
 
     # 疲劳按这件事的时长给：活动才累，闲着不累
     reward = dict(verdict.get("reward") or {})
-    reward["fatigue"] = round(float(verdict["duration"]) * 0.05, 2)   # 只按时长，不采纳模型自估
+    reward.pop("sleepiness", None)      # 困意只由生理推进，模型不能直接加
+    if verdict.get("sleeping"):
+        # 睡眠期间生理由 advance 按小时推进，这里不要再叠奖励
+        for key in ("fatigue", "sleepiness"):
+            reward.pop(key, None)
+    else:
+        hours = float(verdict["duration"]) / 60.0
+        reward["fatigue"] = round(hours * effort_rate(verdict.get("effort")), 2)
     verdict["reward"] = reward
 
+    log("commit", desc=description[:60], minutes=verdict["duration"],
+        slot=verdict["slot"], effort=verdict.get("effort"),
+        sleeping=verdict.get("sleeping"))
+
+    # 瞬时动作被判成几十上百分钏：记下来，供事后核查
+    instant_words = ("走进", "推门", "坐下", "拉开", "拿起", "合上", "转身", "站住", "停步")
+    if float(verdict["duration"]) >= 30 and any(w in description for w in instant_words):
+        log("suspect_duration", desc=description[:60], minutes=verdict["duration"])
+
+    if verdict.get("sleeping"):
+        if float((ch.get("metabolism") or {}).get("sleepiness", 0)) < 55:
+            return {"未执行": "动作未受理：她还不够困，躺下也睡不着。",
+                    "ok": False, "allow": False}
+        if (ch.get("state") or {}).get("active") == "sleep":
+            return {"line": str(line or "").strip() or None,
+                    "已执行": "她已经在睡了。", "ok": True}
+        timers.set_sleeping(True)                # 只改状态
+        return {"line": str(line or "").strip() or None,
+                "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
+                "ok": True}
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
         cancelled = timers.cancel(verdict["slotId"])
@@ -429,24 +619,29 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None):
             semantic=description[:30],
             slot=verdict["slot"],
             reward=verdict["reward"],
-            location=verdict["location"],
+            location=(location or verdict["location"]),
             silent=verdict["duration"] <= 0,
             source="body",
         )
-    except timers.SlotFull as e:
-        return {"ok": False, "allow": False, "reason": str(e)}
+        if verdict.get("sleeping") and entry:
+            entries = timers.load_timers()          # 标记为闹钟
+            for item in entries:
+                if item.get("id") == entry.get("id"):
+                    item["alarm"] = True
+            timers.save_timers(entries)
+    except timers.SlotFull as exc:           # 闸门已查过，走到这里说明并发出错
+        log("slot.race", desc=description[:40], error=str(exc)[:80])
+        return {"ok": False, "allow": False,
+                "未执行": _reject_text(timers.blocking_entries(), str(exc))
+                .replace("动作未受理：", "", 1)}
 
     ends = time.strftime("%H:%M", time.localtime(float(entry["at"])))
-    return {
+    receipt = {
+        "line": str(line or "").strip() or None,
         "已执行": (f"动作已受理：{description}，预计 {human_left_sec(verdict['duration'] * 60)}"
                    f"后完成（{ends}）。{NEXT_STEP}"),
         "ok": True,
-        "allow": True,
-        "slot": verdict["slot"],
-        "duration": verdict["duration"],
-        "endsAt": ends,
-        "location": verdict["location"] or None,
-        "text": verdict["text"],
-        "timer": entry["id"],
-        "cancelled": [t.get("semantic") or t.get("text") for t in cancelled],
     }
+    if cancelled:
+        receipt["cancelled"] = [t.get("semantic") or t.get("text") for t in cancelled]
+    return receipt

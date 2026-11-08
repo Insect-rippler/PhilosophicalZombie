@@ -21,13 +21,21 @@
 """
 
 import json
+import paths as _paths
+import os
+
+try:
+    from trace import log
+except ImportError:
+    def log(*a, **k):
+        pass
 import os
 import random
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE_DIR = ROOT / "state" / "realTime"
+STATE_DIR = _paths.data("realTime")
 TIMERS = STATE_DIR / "timers.json"
 CHARACTER = STATE_DIR / "character.json"
 PENDING = STATE_DIR / "pending.json"
@@ -39,8 +47,14 @@ METABOLISM_RANGE = {
     "hydration": (0.0, 100.0), "fatigue": (0.0, 200.0),
     "sleepiness": (0.0, 100.0), "sexualDesire": (0.0, 100.0),
 }
-EMOTION_RANGE = {"favor": (0.0, 240.0), "trust": (0.0, 240.0),
-                 "possessiveness": (0.0, 240.0), "unease": (0.0, 240.0)}
+EMOTION_RANGE = {"emotion": (0.0, 240.0)}
+EMOTION_CENTER = 120.0
+EMOTION_LOCK_LOW = 30.0        # 再往下就进「低落」，先锁住
+EMOTION_LOCK_HIGH = 200.0      # 再往上就进「昂扬」，先锁住
+EMOTION_LOCK_COOLDOWN = 6      # 越界后静默的轮数
+EMOTION_DRIFT_BASE = 1.5       # 每小时回归基准（点）
+EMOTION_DRIFT = {"低落": 1.0, "戒备": 1.5, "正常": 0.4,
+                 "高涨": 1.5, "昂扬": 1.0}
 
 
 # ---------------- 读写 ----------------
@@ -57,7 +71,14 @@ def _write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    for attempt in range(6):                 # Windows 上偶发被占用，重试几次
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def load_timers():
@@ -74,8 +95,7 @@ def default_character():
         "metabolism": {"hp": 100.0, "health": 100.0, "bodyTemperature": 36.5,
                        "satiety": 80.0, "hydration": 70.0, "fatigue": 10.0,
                        "sleepiness": 10.0, "sexualDesire": 10.0},
-        "emotion": {"favor": 120.0, "trust": 120.0,
-                    "possessiveness": 120.0, "unease": 120.0},
+        "emotion": {"emotion": 120.0},
         "state": {"active": "wake", "since": time.strftime("%Y-%m-%d %H:%M")},
         "local": "",
         "lastUpdate": time.time(),
@@ -93,7 +113,7 @@ def load_character():
 
 
 def save_character(ch):
-    ch["lastUpdate"] = time.time()
+    # 时间基准由 advance 负责，这里不能覆盖，否则生理推进会隔轮才生效
     _write(CHARACTER, ch)
 
 
@@ -145,8 +165,9 @@ INSTANT_SECONDS = 30        # 这个时长以内、且不移动的动作，不�
 
 
 def slot_id_for(slot=None):
-    """事件槽放「大块的事」，其余都算身体槽。"""
-    return "event" if str(slot or "").strip() == "event" else "active"
+    """short / long / event 各占一个独立槽位。"""
+    name = str(slot or "").strip()
+    return name if name in ("short", "long", "event") else "short"
 
 
 def occupancy(now=None):
@@ -159,9 +180,25 @@ def occupancy(now=None):
             sid = slot_id_for(entry.get("slot"))
         if not sid:
             continue
-        if float(entry.get("at") or 0) > now:
+        if float(entry.get("at") or 0) > now + 3:      # 只剩 3 秒内的不算占用
             counts[sid] = counts.get(sid, 0) + 1
     return counts
+
+
+def blocking_entries(now=None, grace=None):
+    """占着槽位、还没到点的条目。与 occupancy 用同一套判定。"""
+    now = time.time() if now is None else float(now)
+    grace = GRACE_SECONDS if grace is None else float(grace)
+    out = []
+    for entry in load_timers():
+        sid = entry.get("slotId")
+        if not sid and entry.get("kind") == "action":
+            sid = slot_id_for(entry.get("slot"))
+        if not sid:
+            continue
+        if float(entry.get("at") or 0) > now + grace:
+            out.append(entry)
+    return out
 
 
 def can_take(slot_id, now=None):
@@ -174,7 +211,9 @@ def can_take(slot_id, now=None):
     capacity = int(spec.get("capacity") or 1)
     if used >= capacity:
         label = spec.get("label") or slot_id
-        return False, f"{label}槽位已满（{used}/{capacity}）"
+        busy = blocking_entries(now)
+        doing = str((busy[0].get("semantic") or busy[0].get("text") or "")).strip() if busy else ""
+        return False, f"{label}槽位已满（{used}/{capacity}）" + (f"：{doing}" if doing else "")
     return True, ""
 
 
@@ -187,6 +226,12 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
     text 是到期后进上下文的那句话，由 body 在建的时候一并写好——
     这样到期时纯代码搬运即可，不需要再调一次模型。
     """
+    if kind in ("action", "event"):
+        cap = SLOT_MINUTE_CAP.get(str(slot).strip())
+        if cap is not None and float(minutes or 0) > cap:
+            log("timer.capped", slot=slot, was=round(float(minutes), 1), cap=cap,
+                text=str(text)[:26])
+            minutes = cap
     slot_id = slot_id_for(slot) if kind == "action" else None
     if slot_id:
         ok, why = can_take(slot_id)
@@ -202,7 +247,7 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
         "kind": kind,
         "semantic": semantic or text[:20],
         "text": text,
-        "slot": "body" if kind == "action" else str(slot or ""),
+        "slot": (slot_id or "short") if kind == "action" else str(slot or ""),
         "slotId": slot_id,
         "chance": int(chance),
         "silent": bool(silent),
@@ -213,29 +258,11 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
         entry["reward"] = dict(reward)
     if location:
         entry["location"] = str(location)
-    if isinstance(state, dict) and state:
-        entry["state"] = dict(state)
     timers.append(entry)
     save_timers(timers)
     return entry
 
 
-def apply_instant(text, *, reward=None, location="", state=None, silent=True, now=None):
-    """秒级、不移动的动作：立刻生效，不进槽、不建计时器。
-
-    返回一条"已发生"的记录；silent=False 时同时进缓存池，供下一轮参考。
-    """
-    now = time.time() if now is None else float(now)
-    ch = load_character()
-    applied = _apply_reward(ch, reward) if reward else {}
-    if location:
-        ch["local"] = location
-    if isinstance(state, dict) and state:
-        ch.setdefault("state", {}).update(state)
-    save_character(ch)
-    if not silent and str(text or "").strip():
-        push_pending([text], now)
-    return {"applied": applied, "location": ch.get("local"), "at": now}
 
 
 # ---------------- 结算（纯代码） ----------------
@@ -255,12 +282,30 @@ def _apply_reward(ch, delta):
             continue
         if key in METABOLISM_RANGE:
             metab[key] = round(_clamp(float(metab.get(key, 0)) + float(value),
-                                      METABOLISM_RANGE[key]), 2)
+                                      METABOLISM_RANGE[key]), 3)
             applied[key] = float(value)
         elif key in EMOTION_RANGE:
-            emo[key] = round(_clamp(float(emo.get(key, 0)) + float(value),
-                                    EMOTION_RANGE[key]), 2)
-            applied[key] = float(value)
+            cur = float(emo.get(key, EMOTION_CENTER))
+            want = cur + float(value)
+            st = ch.setdefault("state", {})
+            lock = st.get("emotionLock") or {}
+            cool = int(lock.get("cool") or 0)
+            side = None
+            if cur >= EMOTION_LOCK_LOW and want < EMOTION_LOCK_LOW:
+                side = "low"
+            elif cur <= EMOTION_LOCK_HIGH and want > EMOTION_LOCK_HIGH:
+                side = "high"
+            if st.pop("emotionBreakPending", False):
+                st["emotionLock"] = {"side": "none", "cool": EMOTION_LOCK_COOLDOWN}
+            elif side and cool == 0 and lock.get("side") == side:
+                want = EMOTION_LOCK_LOW if side == "low" else EMOTION_LOCK_HIGH
+            elif side and cool == 0:
+                # 只在「从界内跨出界」且未处于冷却时锁住并提示
+                want = EMOTION_LOCK_LOW if side == "low" else EMOTION_LOCK_HIGH
+                st["emotionLock"] = {"side": side, "cool": 0}
+                applied["_locked"] = side
+            emo[key] = round(_clamp(want, EMOTION_RANGE[key]), 3)
+            applied[key] = round(float(value), 3)
     return applied
 
 
@@ -291,15 +336,20 @@ def settle(now=None, *, rng=None):
             fired.append({"id": entry.get("id"), "missed": True})
             continue                                  # 概率没中，直接作废
 
+        if entry.get("alarm"):                    # 闹钟：睡着就叫醒，醒着只提一句
+            state_now = ch.setdefault("state", {})
+            if state_now.get("active") == "sleep":
+                state_now["active"] = "wake"      # 直接改 ch，随 settle 一起落盘
+                state_now.pop("sleepStartedAt", None)
+                entry["text"] = "闹钟到点了，她醒了过来。"
+            else:
+                entry["text"] = "闹钟到点了。"
+                entry["silent"] = False
+
         if entry.get("reward"):
             entry["applied"] = _apply_reward(ch, entry["reward"])
         if entry.get("location"):
             ch["local"] = entry["location"]
-        if isinstance(entry.get("state"), dict):
-            state = ch.setdefault("state", {})
-            if "active" in entry["state"] and state.get("active") != entry["state"]["active"]:
-                state["since"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
-            state.update(entry["state"])
 
         if not entry.get("silent") and str(entry.get("text") or "").strip():
             lines.append(str(entry["text"]).strip())
@@ -319,22 +369,111 @@ def settle(now=None, *, rng=None):
 
 # 每小时变化：运动/睡眠不同。负数是减少，正数是增加。
 RATES = {
-    "awake": {"satiety": -4.0, "hydration": -6.0, "fatigue": -0.5, "sleepiness": +4.0},
-    "sleep": {"satiety": -1.5, "hydration": -2.0, "fatigue": -12.0, "sleepiness": -14.0},
+    "awake": {"satiety": -4.0, "hydration": -6.0, "fatigue": +0.5, "sleepiness": +0.5},
+    "sleep": {"satiety": -1.5, "hydration": -2.0, "fatigue": -7.0, "sleepiness": -7.0},
 }
 MAX_GAP_HOURS = 12
+SLOT_MINUTE_CAP = {"short": 5.0, "long": 180.0, "event": 480.0}
+GRACE_SECONDS = 3        # 剩余不足这么多秒的条目不算占用
 MAINTAIN_AFTER_HOURS = 3      # 睡着超过这么久，就该跑一次维护
-MAINTENANCE = ROOT / "state" / "realTime" / "maintenance.json"          # 一次结算最多补 12 小时，再长就当睡过去了
+MAINTENANCE = _paths.data("realTime", "maintenance.json")          # 一次结算最多补 12 小时，再长就当睡过去了
 
 
-def night_factor(now=None):
-    """夜里更容易困：22 点到 6 点翻倍，傍晚次之。"""
-    hour = time.localtime(time.time() if now is None else float(now)).tm_hour
-    if hour >= 22 or hour < 6:
-        return 2.2, 1.3          # 困意倍数、疲劳倍数
-    if hour >= 18:
-        return 1.5, 1.1
-    return 1.0, 1.0
+# 一天里的目标困意：白天低，入夜后抬起来，凌晨最高
+# 困意的时间基础值：两个谐波拟合出来的平滑曲线
+# 峰值 02~03 点，清晨陡降，正午最低，傍晚回升
+_BASE = (52.192, 36.222, 1.614, 3.255, 7.057)     # a0, cos1, sin1, cos2, sin2
+TARGET_GAIN = 0.6      # 实际值向基准靠拢的强度
+SLEEP_SLOW_CAP = 1.25  # 睡眠恢复最多被拖慢到这个倍数
+
+
+SLEEP_PHASE_SHIFT = 0.7        # 曲线整体后移（小时）：让晚上的困意来得晚一点
+
+
+def sleepiness_base(hour):
+    """按一天中的时刻（小时，可为小数）给出困意基准值。"""
+    import math
+    hour = (hour - SLEEP_PHASE_SHIFT) % 24
+    w = 2 * math.pi / 24.0
+    a0, c1, s1, c2, s2 = _BASE
+    return (a0 + c1 * math.cos(w * hour) + s1 * math.sin(w * hour)
+            + c2 * math.cos(2 * w * hour) + s2 * math.sin(2 * w * hour))
+
+
+
+
+
+
+SLEEP_FORCE_CHANCE = 0.01      # 困到极限后每 tick 昏迷的概率
+SLEEP_WAKE_CHANCE = 0.08       # 睡够之后每 tick 醒来的概率
+SLEEP_FORCE_AT = 90            # 困意进入 [90,100] 段才可能昏迷
+SLEEPY_BAND = 60               # 进入犯困段
+WAKE_BAND = 30                 # 醒来段：困意低于此值才计算苏醒概率
+SLEEP_WAKE_BELOW = 20          # 困意降到这个值以下才可能醒
+COLLAPSE_FATIGUE = 170         # 疲劳到这个值会累垮
+COLLAPSE_HEALTH = 20           # 健康掉到这个值会倒下
+
+
+def set_sleeping(on, now=None):
+    """切换睡眠状态：醒来时清掉入睡时间。"""
+    now = time.time() if now is None else float(now)
+    ch = load_character()
+    state = ch.setdefault("state", {})
+    if on:
+        state["active"] = "sleep"
+        state["sleepStartedAt"] = float(state.get("sleepStartedAt") or now)
+        log("sleep.on", at=round(now, 1))
+    else:
+        state["active"] = "wake"
+        slept = 0.0
+        if state.get("sleepStartedAt"):
+            slept = round((now - float(state["sleepStartedAt"])) / 3600, 2)
+        state.pop("sleepStartedAt", None)
+        log("sleep.off", slept_hours=slept, at=round(now, 1))
+    _write(CHARACTER, ch)
+    return slept if not on else 0.0
+
+
+def harness_metabolism():
+    """读 harness.metabolism（耦合表等），拿不到就空。"""
+    import json as _json
+    from pathlib import Path as _Path
+    try:
+        cfg = _json.loads((_paths.data("Philosophical.json"))
+                          .read_text(encoding="utf-8"))
+        return ((cfg.get("harness") or {}).get("metabolism") or {})
+    except (OSError, ValueError):
+        return {}
+
+
+def coupling_multipliers(metab):
+    """状态之间互相影响：缺水更累、太累更困、身体差更没力气。"""
+    table = []
+    try:
+        table = (harness_metabolism() or {}).get("coupling") or []
+    except Exception:                        # noqa: BLE001
+        table = []
+    mult = {"fatigue": 1.0, "sleepiness": 1.0}
+    try:
+        cont = (harness_metabolism() or {}).get("continuous") or {}
+    except Exception:                        # noqa: BLE001
+        cont = {}
+    # 连续关系：健康越差越容易累，疲劳越高越容易困
+    health = float(metab.get("health", 100))
+    fatigue = float(metab.get("fatigue", 0))
+    mult["fatigue"] *= 1 + max(0.0, (100 - health) / 100) * float(cont.get("healthToFatigue", 0))
+    mult["sleepiness"] *= 1 + max(0.0, fatigue / 180.0) * float(cont.get("fatigueToSleepiness", 0))
+    for rule in table:
+        key = rule.get("when")
+        value = float(metab.get(key, 0))
+        hit = (rule.get("lt") is not None and value < float(rule["lt"])) or \
+              (rule.get("gt") is not None and value > float(rule["gt"]))
+        if not hit:
+            continue
+        for target in ("fatigue", "sleepiness"):
+            if rule.get(target):
+                mult[target] *= float(rule[target])
+    return mult
 
 
 def advance(now=None):
@@ -350,14 +489,48 @@ def advance(now=None):
     if hours <= 0.01:
         return 0.0, {}
     hours = min(hours, MAX_GAP_HOURS)
+    log("advance", hours=round(hours, 3), last=round(last, 1), now=round(now, 1),
+        sleeping=(ch.get("state") or {}).get("active") == "sleep",
+        before={k: ch.get("metabolism", {}).get(k) for k in ("sleepiness", "fatigue")})
 
-    sleeping = (ch.get("state") or {}).get("active") == "sleep"
-    rates = dict(RATES["sleep" if sleeping else "awake"])
-    if not sleeping:                       # 夜里更容易困、更累
-        sleep_mul, fatigue_mul = night_factor(now)
-        rates["sleepiness"] = rates.get("sleepiness", 0) * sleep_mul
-        rates["fatigue"] = rates.get("fatigue", 0) * fatigue_mul
     metab = ch.setdefault("metabolism", {})
+    coupling = coupling_multipliers(metab)
+    sleeping = (ch.get("state") or {}).get("active") == "sleep"
+    rates = dict(RATES["sleep" if sleeping else "awake"])   # 昼夜差异由 sleepiness_base 承担
+    # 睡得越累恢复越快：疲惫 60 时 -9/h，100 时 -11/h，200 时 -16/h
+    if sleeping:
+        rates["fatigue"] = -(6.0 + float(metab.get("fatigue", 0)) / 20.0)
+
+    # 清醒时乘耦合；睡着时按固定速率恢复（睡眠质量由时长承担，不在这里再缩放）
+    if not sleeping:
+        for key in ("fatigue", "sleepiness"):
+            rates[key] = rates.get(key, 0) * coupling[key]
+
+    if not sleeping:
+        # 动态调节：离目标越远，涨得越快/越慢，把节奏拉回一天该有的样子
+        lt = time.localtime(now)
+        target = sleepiness_base(lt.tm_hour + lt.tm_min / 60.0)
+        drift = (target - float(metab.get("sleepiness", 0))) * TARGET_GAIN
+        rates["sleepiness"] += drift
+        log("circadian", target=round(target), drift=round(drift, 2),
+            sleepiness=round(float(metab.get("sleepiness", 0))))
+    if coupling["fatigue"] != 1.0 or coupling["sleepiness"] != 1.0:
+        log("coupling", fatigue=round(coupling["fatigue"], 2),
+            sleepiness=round(coupling["sleepiness"], 2),
+            metab={k: metab.get(k) for k in ("hydration", "satiety", "fatigue", "health")})
+    emo = ch.setdefault("emotion", {})
+    value = float(emo.get("emotion", EMOTION_CENTER))   # 0 是合法值，不能用 or
+    emo_name, _ = stage_of("emotion", value)
+    coef = EMOTION_DRIFT.get(emo_name)
+    if coef:
+        step = EMOTION_DRIFT_BASE * coef * hours
+        if value >= EMOTION_CENTER:
+            step = -step
+        value = max(0.0, min(240.0, value + step))
+        emo["emotion"] = round(value, 3)
+        log("emotion.drift", band=emo_name, coef=coef,
+            value=round(value, 1), step=round(step, 2))
+
     applied = {}
     for key, rate in rates.items():
         if key not in METABOLISM_RANGE:
@@ -366,32 +539,77 @@ def advance(now=None):
         after = _clamp(before + rate * hours, METABOLISM_RANGE[key])
         if round(after, 1) != round(before, 1):
             applied[key] = round(after - before, 1)
-        metab[key] = round(after, 2)
+        metab[key] = round(after, 3)
 
     # 体温缓慢回到 36.5
     temp = float(metab.get("bodyTemperature", 36.5))
     metab["bodyTemperature"] = round(temp + (36.5 - temp) * min(1.0, hours / 3), 2)
+    log("advance.done", applied=applied,
+        after={k: metab.get(k) for k in ("sleepiness", "fatigue")})
 
     state = ch.setdefault("state", {})
+
+    # 概率判定：困到极限会撑不住睡过去；睡够了会自己醒
+    sleepiness_now = float(metab.get("sleepiness", 0))
+    fatigue_now = float(metab.get("fatigue", 0))
+    health_now = float(metab.get("health", 100))
+    force_at = band_start("sleepiness", "头昏眼花", SLEEP_FORCE_AT)
+    collapse_at = band_start("fatigue", "撑不住", COLLAPSE_FATIGUE)
+    health_at = band_end("health", "很差", COLLAPSE_HEALTH)
+    wake_band = SLEEP_WAKE_BELOW                # 醒来阈值：睡到几乎不困才算睡够
+
+    collapse = None
+    if sleepiness_now >= force_at:
+        collapse = "困到极限"
+    elif fatigue_now >= collapse_at:
+        collapse = "累垮了"
+    elif health_now < health_at:
+        collapse = "身体撑不住"
+    if not sleeping and collapse and random.random() < SLEEP_FORCE_CHANCE:
+        log("sleep.force", reason=collapse, sleepiness=sleepiness_now,
+            fatigue=fatigue_now, health=health_now)
+        sleeping = True
+        metab["_forceSleep"] = 1
+    elif sleeping:
+        slept_h = ((now - float(state.get("sleepStartedAt") or now)) / 3600)
+        # 困意越低越睡得浅：这是身体自己醒，不是闹钟
+        rest = max(0.0, (wake_band - sleepiness_now) / max(1.0, wake_band))
+        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest)      # 到点后 8%~16%/tick
+        if sleepiness_now <= wake_band and random.random() < wake_p:
+            log("sleep.wake", sleepiness=sleepiness_now, slept=round(slept_h, 2))
+            metab["_forceWake"] = 1
+
+    if metab.pop("_forceSleep", None):
+        state["active"] = "sleep"
+        state.setdefault("sleepStartedAt", now)
     if sleeping and not state.get("sleepStartedAt"):
         state["sleepStartedAt"] = last      # 记下这一觉的起点
     if state.get("active") != "sleep":
         state.pop("sleepStartedAt", None)
+        since = state.get("groggySince")
+        if since and now - float(since) > 3 * 3600:
+            state.pop("groggy", None)
+            state.pop("groggySince", None)
 
-    if sleeping and state.get("active") == "sleep" and float(metab.get("sleepiness", 0)) <= 12 and float(metab.get("fatigue", 0)) <= 30:
+    if sleeping and state.get("active") == "sleep" and metab.pop("_forceWake", None):
         state["active"] = "wake"
         state["since"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
         applied["active"] = "wake"
         applied["_woke"] = True
-        # 梦没做完就醒 = 没整理好，起来会头昏眼花
         mark = _read(MAINTENANCE, {}) or {}
         started = float(state.get("sleepStartedAt") or 0)
-        if started and float(mark.get("doneFor") or 0) != started:
+        # 睡没睡够看生理：困意和疲惫都低就算睡透了，与维护有没有跑无关
+        rested = (float(metab.get("sleepiness", 0)) <= 25
+                  and float(metab.get("fatigue", 0)) <= 30)
+        if not rested:
             state["groggy"] = True
+            state["groggySince"] = now
             applied["_groggy"] = True
         else:
             state.pop("groggy", None)
+            state.pop("groggySince", None)
         state.pop("sleepStartedAt", None)
+        sleeping = False
     elif not sleeping and float(metab.get("sleepiness", 0)) >= 92:
         applied["_sleepy"] = "困"
     if sleeping:
@@ -417,22 +635,10 @@ def advance(now=None):
 
 # ---------------- 状态渲染（常驻内容） ----------------
 
-DAY_PARTS = ((5, "清晨"), (8, "上午"), (11, "中午"), (13, "下午"),
-             (17, "傍晚"), (22, "夜里"), (24, "深夜"))
+# (起始小时, 名称)：13 点就是下午，不是一个区间刚好在某处断开
+DAY_PARTS = ((0, "深夜"), (5, "清晨"), (8, "上午"), (11, "中午"),
+             (13, "下午"), (17, "傍晚"), (22, "夜里"))
 
-# 只有不正常时才报，正常的不占 token。
-# lt = 低于阈值算异常（饱食、水分），gt = 高于阈值算异常（疲劳、困意）。
-# 顺序按「严重程度」排，命中第一条就停，不堆症状。
-CONDITIONS = (
-    ("satiety", "lt", 20, "肚子空得难受。"),
-    ("hydration", "lt", 20, "渴得厉害。"),
-    ("fatigue", "gt", 140, "累得快要撑不住。"),
-    ("sleepiness", "gt", 85, "困得睁不开眼。"),
-    ("satiety", "lt", 45, "有些饿了。"),
-    ("hydration", "lt", 45, "有些渴。"),
-    ("fatigue", "gt", 90, "身上发沉，有些累。"),
-    ("sleepiness", "gt", 60, "有些困。"),
-)
 
 
 def clock_text(now=None):
@@ -440,14 +646,77 @@ def clock_text(now=None):
     now = time.time() if now is None else float(now)
     tm = time.localtime(now)
     hour = tm.tm_hour
-    part = next((label for edge, label in DAY_PARTS if hour < edge), "深夜")
+    part = "深夜"
+    for edge, label in DAY_PARTS:
+        if hour >= edge:
+            part = label
     return f"{time.strftime('%H:%M', tm)}（{part}）"
 
 
-def render_state(ch=None, pending="", now=None):
+def stage_tables():
+    return (harness_metabolism() or {}).get("stages") or {}
+
+
+def band_start(key, name, fallback):
+    """某一段的起点：上一段的 to，找不到就用 fallback。"""
+    prev = 0.0
+    for band in stage_tables().get(key) or []:
+        if band.get("name") == name:
+            return float(prev)
+        prev = float(band.get("to", 100))
+    return float(fallback)
+
+
+def band_end(key, name, fallback):
+    """某一段的终点（含），即该段的 to。"""
+    for band in stage_tables().get(key) or []:
+        if band.get("name") == name:
+            return float(band.get("to", 100))
+    return float(fallback)
+
+
+def stage_of(key, value):
+    """返回 (阶段名, 给模型看的一句话)。"""
+    bands = stage_tables().get(key) or []
+    for index, band in enumerate(bands):
+        edge = float(band.get("to", 100))
+        last = index == len(bands) - 1
+        if float(value) < edge or (last and float(value) <= edge):
+            return band.get("name") or "", band.get("say") or ""
+    return "", ""
+
+
+def snapshot():
+    """唯一数据源：先结算，再一次性取时间、角色、计时器。"""
+    settle()
+    now = time.time()
+    return {"now": now, "ch": load_character(), "timers": load_timers()}
+
+
+def tick_lock():
+    """每轮把冷却减一；归零就解锁。"""
+    ch = load_character()
+    lock = (ch.get("state") or {}).get("emotionLock")
+    if not lock:
+        return
+    cool = int(lock.get("cool") or 0)
+    if cool > 0:
+        lock["cool"] = cool - 1
+        if lock["cool"] <= 0:
+            lock["side"] = "none"
+        _write(CHARACTER, ch)
+
+
+def render_state(ch=None, pending="", now=None, full=False):
     """渲染 <state> 的内容行。这是常驻信息：时间、位置、身体状况、刚发生的事。"""
     ch = ch if isinstance(ch, dict) else load_character()
-    lines = [f"现在是 {clock_text(now)}。"]
+    lines = [f"当前时间：{clock_text(now)}。"]
+    if (ch.get("state") or {}).get("active") == "sleep":
+        alarm = [e for e in load_timers() if e.get("alarm")]
+        when = ""
+        if alarm:
+            when = "，闹钟定在 " + time.strftime("%H:%M", time.localtime(float(alarm[0]["at"])))
+        lines.append(f"角色正在睡眠{when}。不要替她递交睡下的动作；醒来会由生理或闹钟触发。")
 
     moment = time.time() if now is None else float(now)
     last_action = ch.get("state", {}).get("lastActionAt")
@@ -460,7 +729,7 @@ def render_state(ch=None, pending="", now=None):
             break
     if not last_action:                       # 没有计时器时，回看 session 最后一条
         try:
-            path = Path(__file__).resolve().parents[1] / "state" / "session" / "session.jsonl"
+            path = _paths.data("session", "session.jsonl")
             for raw in reversed(path.read_text(encoding="utf-8").splitlines()[-40:]):
                 raw = raw.strip()
                 if not raw:
@@ -475,39 +744,67 @@ def render_state(ch=None, pending="", now=None):
     if last_action:
         span = max(0, int((moment - last_action) // 60))
         if span >= 60:
-            lines.append(f"距离上一次行动已经过去 {span // 60} 小时 {span % 60} 分钟。")
+            lines.append(f"距上一次行动已过去 {span // 60} 小时 {span % 60} 分钟。")
         else:
-            lines.append(f"距离上一次行动已经过去 {span} 分钟。")
+            lines.append(f"距上一次行动已过去 {span} 分钟。")
 
     local = str(ch.get("local") or "").strip()
     if local:
-        lines.append(f"你在{local}。")
+        lines.append(f"角色当前位置：{local}。")
 
     busy = [t for t in load_timers()
             if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
     if busy:
-        doing = str(busy[0].get("semantic") or busy[0].get("text") or "").strip()
-        left = max(1, int((float(busy[0]["at"]) - moment) // 60) + 1)
-        lines.append(f"手上的事：{doing}，约 {left} 分钟后结束。")
+        parts = []
+        for entry in busy:
+            doing = str(entry.get("semantic") or entry.get("text") or "").strip()
+            left_sec = max(0.0, float(entry["at"]) - moment)
+            slot = entry.get("slotId") or entry.get("slot") or ""
+            left = (f"{int(left_sec // 60)} 分钟" if left_sec >= 60
+                    else f"{int(left_sec)} 秒")
+            parts.append(f"[{slot}] {doing}（还剩 {left}）")
+        lines.append("角色正在做：" + "；".join(parts) + "。")
 
-    state = ch.get("state") or {}
-    if state.get("active") == "sleep":
-        lines.append("你正在睡着。")
 
     if ch.get("state", {}).get("groggy"):
-        lines.append("头昏眼花，脑子发涨，昨夜的梦没做完。")
+        lines.append("角色刚睡醒，没睡透（生理原因）：动作会慢半拍，说话也短。")
+
+    if os.environ.get("PZ_TEST") == "1":
+        lines.append("当前是测试环境（系统原因）：不要调用压缩、维护类工具；正式运行时才启用。")
 
     metab = ch.get("metabolism") or {}
-    for key, op, threshold, text in CONDITIONS:
+    names = (("sleepiness", "困意"), ("fatigue", "疲惫"), ("satiety", "饱食"),
+             ("hydration", "水分"), ("health", "健康"))
+    for key, label in names:
         value = metab.get(key)
         if not isinstance(value, (int, float)):
             continue
-        if (op == "lt" and value < threshold) or (op == "gt" and value > threshold):
-            lines.append(text)
-            break                     # 一次只报最要紧的一条，不堆症状
+        name, say = stage_of(key, value)
+        if say:
+            lines.append(f"{label} {int(round(value))}（{name}）：{say}")
+        elif full:
+            lines.append(f"{label} {int(round(value))}（{name}）")
+    lock = (ch.get("state") or {}).get("emotionLock") or {}
+    if lock.get("side") in ("low", "high"):
+        where = "跌到分界" if lock["side"] == "low" else "涨到分界"
+        lines.append(
+            f"【情绪已经{where}，暂时锁住】她再往前一步，就不是自己能回来的了。"
+            f"要越过，递交 active 时带 emotion_break=true，并在 description 里写清她为什么认这一步。")
+
+    emo = (ch.get("emotion") or {}).get("emotion")
+    if isinstance(emo, (int, float)):
+        name, say = stage_of("emotion", emo)
+        if say:
+            lines.append(f"情绪 {int(round(emo))}（{name}）：{say}")
+        elif full:
+            lines.append(f"情绪 {int(round(emo))}（{name}）")
 
     if pending:
-        lines.append(f"[刚刚] {pending}")
+        lines.append(f"刚刚发生：{pending}")
+
+    log("state.render", busy=[str(t.get("semantic"))[:24] for t in busy],
+        clock=clock_text(now),
+        metab={k: ch.get("metabolism", {}).get(k) for k in ("sleepiness", "fatigue")})
     return lines
 
 
@@ -518,6 +815,7 @@ def push_pending(lines, now=None):
     pool = _read(PENDING, [])
     if not isinstance(pool, list):
         pool = []
+    log("pending.push", lines=[str(x)[:60] for x in lines])
     stamp = time.strftime("%H:%M", time.localtime(now))
     for line in lines:
         pool.append({"at": now, "clock": stamp, "text": line})
