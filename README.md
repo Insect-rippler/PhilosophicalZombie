@@ -16,7 +16,7 @@
 
 ## 上下文组装
 
-段落顺序见 `ConsciousnessRealm/AGENT.md` 的「上下文顺序」一节。**`session` 之前的都是 system 级**，可信度高于会话内容本身。
+段落顺序由 `engine/core.py` 的 `SYSTEM_BLOCKS` 与 `context_assemble` 决定。**`session` 之前的都是 system 级**，可信度高于会话内容本身。
 
 | 槽位 | 来源 | 说明 |
 |---|---|---|
@@ -47,7 +47,7 @@
 | `lorebook_momentary` | `<lorebook_momentary>…</lorebook_momentary>` | 同上 |
 | `skill_knowledge` | `<skill_knowledge>…</skill_knowledge>` | 同上 |
 | `state` | `<state>…</state>` | 同上 |
-| `impression` | `<impression>…</impression>` | 单独一条 system 内容，附在规则之后 |
+| `impression` | `<impression>…</impression>` | 包在同一条 system 消息里，排在六段规则之后 |
 | `appearance` | `<appearance>` + 图片 | 独立消息，紧接 system 之后、session 之前 |
 | `plan` | `<plan>…</plan>` | 同上 |
 
@@ -213,7 +213,7 @@ ConsciousnessRealm/plan/
 
 `note` 是必填的——放弃和改方案时的理由才是有价值的材料，比目标本身更能说明她是什么人。
 
-写入时机与状态机校验由统一更新层负责（尚未实现）。当前 `agenda.json` 只能手改。
+写入通过 `plan` 工具完成（已注册）：规划、推进、搁置、完成都走它，`agenda.json` 一般不必手改。
 
 ## body 代理
 
@@ -231,7 +231,7 @@ brain 想做事 → 调 active(description, slot)
 | 文件 | 内容 |
 |---|---|
 | `rule.md` | 它是谁、四件活、输出规范 |
-| `judge.json` | 五个判定节：做不做得了、要花多久、在哪做完、做完有什么变化、到点显示什么 |
+| `judge.json` | 七个判定节：做不做得了、要花多久、在哪做完、做完有什么变化、到点显示什么、是不是要睡、这次见到了谁 |
 
 改判定标准只改这两个文件，不动代码。
 
@@ -248,7 +248,7 @@ brain 想做事 → 调 active(description, slot)
 | 做饭、洗澡、练剑、跨区走动 | 分钟级 | **占身**，进槽 |
 | 睡觉 | 小时级 | 占身 |
 
-阈值 `INSTANT_SECONDS = 30`（在 `engine/timers.py`）：30 秒内做完的事不进槽、不建计时器，位置和数值立刻落。超过才占身。
+阈值 `INSTANT_SECONDS = 30`（在 `engine/timers.py`）：30 秒内做完的事走 `timers.apply_now()`——不进槽、不建计时器，数值与位置立刻落。超过才占身。
 
 之前用 short/long 两个槽位是错的——捋头发和走到门口都算「一分钟内」，会互相挡住，而它们本该能随意叠加。
 
@@ -256,12 +256,12 @@ brain 想做事 → 调 active(description, slot)
 
 | 槽位 | 时长上限 | 说明 |
 |---|---:|---|
-| `short` | 约 5 分钟 | 几十秒到几分钟的事 |
-| `long` | 约 3 小时 | 身体腾不出来的事 |
-| `event` | 约 8 小时 | 整段交出去的活：打一天铁、守夜、赶路 |
+| `short` | 5.3 分钟 | 几十秒到几分钟的事 |
+| `long` | 187 分钟 | 身体腾不出来的事 |
+| `event` | 463 分钟 | 整段交出去的活：打一天铁、守夜、赶路 |
 | `alarm` | — | 独立计时器，到点提醒/叫醒 |
 
-占身的事没做完时，再要一件会被拒绝，理由带着她正在做什么：「她手上的事还没完（去厨房烧水煮面），做不了这个」。
+占身的事没做完时，再要一件会被拒绝，回执带着她正在做什么和还剩多久：「身体正忙着「去厨房烧水煮面」，还剩 4 分 12 秒（19:04 结束）。想立刻改做别的就带 force；想等就以一句正文结束这一轮。」
 
 `active(force=true)` 让她放下手上的事改做别的。被撤销的那件拿不到奖励（只有等到期结算的才有），回执里带 `cancelled`。`force` 只解除占身，不解除身体限制——累到动不了照样拒绝。
 
@@ -378,7 +378,10 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 | `dream.py` | 睡着时的三级升格：切片→块 → 记忆 → 人格 |
 | `maintain.py` | 睡醒维护：提要 → 压缩切片 → 升格；失败则醒来头昏 |
 | `impression.py` | 每隔一段时间整理她对那个人的印象 |
-| `server.py` | 本地 HTTP 服务：界面与状态读取、回合触发 |
+| `server.py` | 本地 HTTP 服务：界面与状态读取、回合触发、维护调度 |
+| `fsio.py` | 原子落盘：临时文件名带线程与随机串，按路径加锁 |
+| `runlog.py` | 运行日志：请求、工具、回合、崩溃都记到 `state/logs/` |
+| `impressions.py` | （见 `impression.py`）印象维护 |
 
 **一次完整的时间线**：
 
@@ -390,6 +393,20 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 ```
 
 **数据包**：地图、事件、委托、提醒、敌人全在 `world/<世界>/` 里，换世界观整包替换；换角色换 `characters/<名>/combat.json`。
+
+## 运行日志
+
+平时不看，排查时先看它：`state/logs/YYYY-MM-DD.jsonl`，一行一个事件。
+
+| 事件 | 含义 |
+|---|---|
+| `turn.begin` / `turn.end` | 一轮起止与耗时（`ms`）、是否产出回复 |
+| `stream.ok` / `stream.fail` | 流式请求：耗时、轮数、字数、失败原因 |
+| `model.ok` / `model.fail` | 非流式请求（判定、维护） |
+| `tool.begin` / `tool.done` | 工具调用与结果长度 |
+| `crash` | 未捕获异常，带堆栈 |
+
+「她明明醒着却不动」时，先看有没有 `stream.fail`：有就是请求层，没有才是她没决定做什么。
 
 ## 约定
 
