@@ -153,6 +153,9 @@ def virtual_alarm(raw_args):
         return {"ok": False, "未执行": "闹钟没设：seconds 必须大于 0。"}
     seconds = min(seconds, 12 * 3600)
     note = str(args.get("note") or "").strip()
+    # 闹钟只留一个：新的到了，旧的作废
+    keep = [e for e in timers.load_timers() if not e.get("alarm")]
+    timers.save_timers(keep)
     timers.add(kind="alarm", text=note or "闹钟响了，她醒了过来。",
                minutes=seconds / 60.0, semantic="闹钟",
                slot="alarm", source="alarm")
