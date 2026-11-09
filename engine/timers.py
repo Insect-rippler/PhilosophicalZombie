@@ -323,6 +323,19 @@ def _apply_reward(ch, delta):
     return applied
 
 
+def apply_now(reward=None, location=None, now=None):
+    """立刻生效的动作：落数值与位置，不建计时器、不占槽。"""
+    now = time.time() if now is None else float(now)
+    ch = load_character()
+    if reward:
+        _apply_reward(ch, dict(reward))
+    if location:
+        ch["local"] = str(location)
+    ch["lastUpdate"] = now
+    _write(CHARACTER, ch)
+    return {"location": ch.get("local"), "metabolism": dict(ch.get("metabolism") or {})}
+
+
 def settle(now=None, *, rng=None):
     """结算到期的计时器。纯代码：改数值/位置/状态，把到期文本倒进缓存池。
 
