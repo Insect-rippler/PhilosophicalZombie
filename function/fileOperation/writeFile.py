@@ -24,15 +24,12 @@ import tempfile
 
 
 def findRoot(startPath):
-    """向上找与目录同名的配置文件(Monroe/Monroe.json), 定位 agent 根。
+    """定位项目根：function/fileOperation/x.py → 上两级就是根。
 
-    这样本文件无论放在 function/fileOperation/ 还是 officina/ 下, 都能定位到根。
+    旧实现往上级找「与目录同名的 json」，会先撞上 function/function.json，
+    于是 ROOT 被算成 function/，相对路径全错。
     """
-    p = Path(startPath).resolve()
-    for cand in [p] + list(p.parents):
-        if cand.is_dir() and cand.joinpath(cand.name + ".json").is_file():
-            return cand
-    return p.parent
+    return Path(startPath).resolve().parents[2]
 
 
 ROOT = findRoot(Path(__file__))
