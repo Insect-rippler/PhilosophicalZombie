@@ -603,8 +603,10 @@ class ChatPage(QWidget):
                 continue
             group = None
             ts = row.get("ts") or ""
-            if role == "narration":
+            if role in ("narration", "scene"):
                 self.add_bubble("narration", text, ts=ts)
+            elif role == "line":
+                self.add_bubble("assistant", text, ts=ts)
             elif role in ("user", "assistant"):
                 self.add_bubble(role, text, ts=ts)
         if group is not None:
@@ -645,8 +647,10 @@ class ChatPage(QWidget):
             text = str(row.get("text") or "")
             if not text:
                 continue
-            if role == "narration":
+            if role in ("narration", "scene"):
                 self.add_bubble("narration", text, ts=row.get("ts") or "")
+            elif role == "line":
+                self.add_bubble("assistant", text, ts=row.get("ts") or "")
             elif role == "tip":
                 self.add_bubble("tip", text)
             elif role in ("user", "assistant"):
@@ -826,6 +830,7 @@ class ChatPage(QWidget):
         self._buffer = ""
         self._tip_group = None
 
+
         self.worker = TurnWorker(text)
         self.worker.tool.connect(self._on_tool)
         self.worker.usage.connect(self._on_usage)
@@ -889,24 +894,42 @@ class ChatPage(QWidget):
             f"平均命中 {data.get('avg', 0):.0f}%   单次命中 {data.get('cache', 0):.0f}%   "
             f"已用上下文 {data.get('ratio', 0):.1f}%")
 
+    def _above_stream(self, role, text):
+        """把一条气泡插在流式正文上方（按到达顺序向上堆叠）。"""
+        import time as _t
+        bubble = Bubble(role, text, None, _t.strftime("%Y-%m-%d %H:%M:%S"))
+        stream = getattr(self, "_stream_bubble", None)
+        at = self.messages.indexOf(stream) if stream is not None else -1
+        if at < 0:
+            at = self.messages.count() - 1
+        self.messages.insertWidget(at, bubble)
+        self._fit_width(bubble)
+        if getattr(self, "_follow", True):
+            bar = self.scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
+        return bubble
+
     def _on_tool(self, payload):
-        kind = str(payload.get("kind") or "tip")
-        label = str(payload.get("text") or payload.get("name") or "")
-        if not label:
+        kind = str(payload.get("kind") or "")
+        text = str(payload.get("text") or "")
+        if not text:
+            return
+        if kind == "scene":
+            self._above_stream("narration", text)
+            return
+        if kind == "action":
+            self._above_stream("narration", text)
+            return
+        if kind == "line":
+            self._above_stream("assistant", text)
             return
         if kind == "narration":
-            self.add_bubble("narration", label)
-            bubble = getattr(self, "_stream_bubble", None)
-            if bubble is not None:
-                item = self.messages.indexOf(bubble)
-                made = self.messages.itemAt(self.messages.count() - 2).widget()
-                self.messages.removeWidget(made)
-                self.messages.insertWidget(max(0, item), made)
+            self._above_stream("narration", text)
             return
         if self._tip_group is None:
             self._tip_group = TipGroup()
             self.messages.insertWidget(self.messages.count() - 1, self._tip_group)
-        self._tip_group.add(label)
+        self._tip_group.add(text)
         self._tip_group.body.show()
 
     def _on_delta(self, text):

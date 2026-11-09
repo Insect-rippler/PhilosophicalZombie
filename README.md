@@ -11,7 +11,8 @@
 | `function/` | 工具注册与实现（`function.json` + 各工具脚本） |
 | `model/` | 本地模型与相关代码（向量库、F5-TTS 服务） |
 | `state/` | 运行状态：配置、session、媒体产物、临时文件 |
-| `vivarium/` | 桌面端（PySide6/Qt）相关资料 |
+| `ui/` | 桌面端界面（PySide6/Qt） |
+| `sim/` | 模拟器：跑时间、自检、生理数值、单轮对话 |
 
 ## 上下文组装
 
@@ -24,13 +25,14 @@
 | `character` | `ConsciousnessRealm/CHARACTER.md` | 角色卡：身份、数据、用语、经历 |
 | `memory_persistent` | `ConsciousnessRealm/MEMORY.md` | 长期记忆，整段常驻 |
 | `lorebook_persistent` | `ConsciousnessRealm/LOREBOOK.md` | 世界常识，整段常驻 |
-| `user` | `ConsciousnessRealm/USER.md` | 角色对用户的认知，常驻 |
+| `impression` | `ConsciousnessRealm/USER.md` | 她对那个人的印象，常驻 |
 | `skill_proficient` | `skill/skill.json`（`constant: true`） | 常驻能力，与角色无关 |
 | `session` | `state/session/session.jsonl` | 会话历史（分界） |
 | `memory_momentary` | `model/memory_store.py` 召回 | 会话切片 + 记忆块，按向量检索 |
 | `lorebook_momentary` | `lorebook/lorebook.json` 匹配 | 具体设定，按标签命中注入 |
 | `skill_knowledge` | `skill/skill.json`（按 `keywords` 命中） | 非驻留能力，按需注入 |
-| `state` | `state/realTime/` | 常驻：时间、位置、身体异常、刚发生的事 |
+| `state` | `state/realTime/` | 常驻：时间、位置、环境、生理、刚发生的事 |
+| `appearance` | `state/realTime/appearance.png` | 她此刻的样子，一张图，紧接 system 之后 |
 | `last_message` | 本轮 user 消息 | 唯一需要回应的内容 |
 | `plan` | `plan/agenda.json` | 角色的目标：只含进行中与搁置 |
 
@@ -45,6 +47,8 @@
 | `lorebook_momentary` | `<lorebook_momentary>…</lorebook_momentary>` | 同上 |
 | `skill_knowledge` | `<skill_knowledge>…</skill_knowledge>` | 同上 |
 | `state` | `<state>…</state>` | 同上 |
+| `impression` | `<impression>…</impression>` | 单独一条 system 内容，附在规则之后 |
+| `appearance` | `<appearance>` + 图片 | 独立消息，紧接 system 之后、session 之前 |
 | `plan` | `<plan>…</plan>` | 同上 |
 
 规则：
@@ -109,9 +113,10 @@
 - 客观事实，按 `keys` 标签匹配后注入；一条只讲一个对象。
 - 键的覆盖面不得超过条目本身的覆盖面（"知道这个词的人，一定知道这条知识吗？"）。
 
-### `USER.md` — 用户
+### `USER.md` — 她对那个人的印象
 
-- **角色的视角**，第一人称，写"我认识这个人到什么程度"，由角色自己维护。
+- **角色的视角**，第一人称，写"我认识这个人到什么程度"。
+- 由系统自动整理，不由主代理直接写。
 - 本质是角色的记忆（认知信息），单列是因为对象唯一且需时刻在场。
 - **只写不会过期的东西**：姓名、来处、稳定的判断、共同经历。
   当前处境、刚说过的话等强时效信息交给 `state`，写进文件几轮后就会变成错的。
@@ -247,14 +252,14 @@ brain 想做事 → 调 active(description, slot)
 
 之前用 short/long 两个槽位是错的——捋头发和走到门口都算「一分钟内」，会互相挡住，而它们本该能随意叠加。
 
-槽位表 `ConsciousnessRealm/world/slots.json`：
+三个行动槽互不阻塞，同一条回复只能递交其中一个：
 
-| 槽位 | 容量 | 说明 |
+| 槽位 | 时长上限 | 说明 |
 |---|---:|---|
-| `active` | 1 | 身体，同一时刻只能做一件占身的事 |
-| `event.random` | 1 | 随机事件 |
-| `goal.short` | 3 | 短目标 |
-| `goal.long` | 1 | 长目标 |
+| `short` | 约 5 分钟 | 几十秒到几分钟的事 |
+| `long` | 约 3 小时 | 身体腾不出来的事 |
+| `event` | 约 8 小时 | 整段交出去的活：打一天铁、守夜、赶路 |
+| `alarm` | — | 独立计时器，到点提醒/叫醒 |
 
 占身的事没做完时，再要一件会被拒绝，理由带着她正在做什么：「她手上的事还没完（去厨房烧水煮面），做不了这个」。
 
@@ -364,14 +369,16 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 
 | 模块 | 作用 |
 |---|---|
-| `timers.py` | 计时器、占身槽位、生理节律、到期文本缓存池 |
-| `body.py` | 行动判定：做不做得成 / 多久 / 在哪 / 什么变化 / 到点说什么 |
-| `combat.py` | 回合制战斗：暴击、治疗次数、低血留一口气、救援 |
-| `events.py` | 地点事件与全局事件池，加权抽一，前置链与变体 |
-| `reminders.py` | 生理提醒，越界必触发，不看概率 |
-| `commissions.py` | 委托：按难度与类型抽敌人 |
-| `dream.py` | 睡着时的三级升格：目标回顾 → 切片→块 → 记忆 → 人格 |
-| `maintain.py` | 睡前维护的调度：压缩 + 升格，失败则醒来头昏 |
+| `core.py` | 上下文组装、会话读写、请求入口 |
+| `timers.py` | 计时器、生理推进、睡眠与苏醒、情绪漂移、环境与风险 |
+| `body.py` | 行动判定：做不做得成 / 多久 / 走不走得动 / 关系与风险 |
+| `tools.py` | 工具注册与调用（`function/` 下的脚本） |
+| `recall.py` | 记忆、世界书、技能三段检索的渲染 |
+| `modelio.py` | 请求发送与用量统计 |
+| `dream.py` | 睡着时的三级升格：切片→块 → 记忆 → 人格 |
+| `maintain.py` | 睡醒维护：提要 → 压缩切片 → 升格；失败则醒来头昏 |
+| `impression.py` | 每隔一段时间整理她对那个人的印象 |
+| `server.py` | 本地 HTTP 服务：界面与状态读取、回合触发 |
 
 **一次完整的时间线**：
 
@@ -391,3 +398,50 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 - **检索以向量为主**：命中不准时先改文本划分（粒度、是否自带人名），不要先加兜底机制。
 - **成本优先级：上下文质量 > 前缀稳定 > 缩减固定 token**。前两项没满足时，不要为了省 token 做破坏性改动（按需裁剪 tools、动态调整段落顺序等）——它们会让缓存整段失效，反而更贵。
 - **稳定在前，易变在后**：system（人设、规则）与 tools 每轮相同，放最前；session 向后增长；检索块和 message 每轮变化，放最后。检索块不写进 session，所以下一轮的缓存不会被它们切断。
+
+## 生理系统
+
+参数全在 `ConsciousnessRealm/body/metabolism.json`：
+
+| 键 | 内容 |
+|---|---|
+| `stages` | 每个指标的阶段、阈值、给角色看的提示语 |
+| `coupling` | 某项过低时对其它项的倍率 |
+| `continuous` | 低到什么程度开始影响别的项 |
+| `ranges` | 每项的取值上下限 |
+
+五项（饱食、水分、疲惫、困意、健康）各自按阶段给出影响值，
+每项的系数由其它项加权算出（0.8~1.2），再乘到该项的基础变化速率上。
+健康只累加负面（上限 −2.2/h），没有负面项时才由正面项恢复。
+
+主代理看到的是阶段（正常 / 有些饿 / 饿坏），看不到数值；
+body 拿到完整数值，用来判断时长与可行性。
+
+睡眠按入睡时的困意推算预期时长，睡满之后才掷苏醒骰子；
+饥饿、口渴、疲惫、健康都会提高夜里醒来的概率，设了闹钟则以闹钟为准。
+
+## 印象维护
+
+`USER.md` 由系统定期整理，不需要主代理调用工具：
+
+```
+距上次更新超过 6 小时，且期间 user 消息不少于 50 条
+睡醒、跑完维护之后
+```
+
+整理时用和主代理同一套上下文，这一轮不演出，只输出修改操作
+（追加 / 替换 / 重写），由代码执行。替换对不上原文时只记警告，不硬改。
+
+## 模拟器
+
+`sim/` 下五个工具，全部跑在隔离的 `state/sim` 里：
+
+| 脚本 | 用途 | 要模型 |
+|---|---|---|
+| `sim/run.py <小时>` | 完整模拟，看作息、动作、台词 | 要 |
+| `sim/check.py` | 全功能自检 | 少量 |
+| `sim/phys.py` | 只跑生理数值曲线 | 不要 |
+| `sim/sleep.py` | 睡眠专项 | 要 |
+| `sim/say.py "…"` | 手动递一轮，看反应与 reasoning | 要 |
+
+改完角色卡先跑 `sim/check.py`，再用 `sim/run.py 24` 看长期行为。

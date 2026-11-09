@@ -242,13 +242,16 @@ def run_with_tools(payload, emit):
                 except (json.JSONDecodeError, AttributeError):
                     scene = None
             if isinstance(scene, str) and scene.strip():      # 1 环境
-                emit("tool", {"kind": "narration", "name": "scene", "text": scene.strip()})
+                emit("tool", {"kind": "scene", "name": "scene", "text": scene.strip()})
             kind, label = describe_tool(name, args, output)
-            emit("tool", {"kind": kind, "name": name, "text": label})   # 2 动作
+            if name == "active":
+                emit("tool", {"kind": "action", "name": name, "text": label})   # 2 动作
+            else:
+                emit("tool", {"kind": kind, "name": name, "text": label})
             if isinstance(said, str) and said.strip():        # 3 动作时说的话
                 said = said.strip()
                 spoken_line = (spoken_line + said) if spoken_line else said
-                emit("delta", said)
+                emit("tool", {"kind": "line", "name": name, "text": said})
             results.append({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
 
@@ -319,9 +322,17 @@ def session_history(limit=40):
                         args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                     except json.JSONDecodeError:
                         args = {}
+                    scene = str(args.get("scene") or "").strip()
                     desc = str(args.get("description") or "").strip()
+                    said = str(args.get("line") or "").strip()
+                    if scene:
+                        rows.append({"role": "scene", "text": scene,
+                                     "ts": item.get("ts") or ""})
                     if desc:
                         rows.append({"role": "narration", "text": desc,
+                                     "ts": item.get("ts") or ""})
+                    if said:
+                        rows.append({"role": "line", "text": said,
                                      "ts": item.get("ts") or ""})
                 elif name:
                     rows.append({"role": "tip", "text": name})
@@ -524,12 +535,34 @@ def skill_text():
 
 
 def idle_settings():
-    node = (core.harness or {}).get("idle") or {}
+    try:
+        cfg = core.loadConfig() or {}
+    except Exception:                        # noqa: BLE001
+        cfg = {}
+    node = ((cfg.get("harness") or {}).get("idle")) or {}
     try:
         minutes = float(node.get("afterMinutes", 30))       # 以 tick 计，即分钟
     except (TypeError, ValueError):
         minutes = 30.0
     return bool(node.get("enabled", True)), max(1.0, minutes)
+
+
+def ensure_activity_mark():
+    """events.json 里没有活动时间时补一个，否则静默唤醒永远不触发。"""
+    path = _paths.data("realTime", "events.json")
+    try:
+        marks = json.loads(path.read_text(encoding="utf-8")) or {}
+    except (OSError, json.JSONDecodeError):
+        marks = {}
+    if marks.get("lastMessageAt"):
+        return
+    marks["lastMessageAt"] = time.time()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(marks, ensure_ascii=False), encoding="utf-8")
+        print("[boot] 活动时间已初始化", flush=True)
+    except OSError:
+        pass
 
 
 def last_activity_at():
@@ -844,7 +877,7 @@ def idle_loop():
                         pass
 
             if should_wake():
-                print("[wake]", "事件/计时" if pending else "静默", flush=True)
+                print("[wake]", "静默", flush=True)
                 idle_tick()
         except Exception:                        # noqa: BLE001
             import traceback
@@ -855,6 +888,7 @@ def idle_loop():
 
 def main():
     import threading
+    ensure_activity_mark()
     threading.Thread(target=idle_loop, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"服务已启动：http://{HOST}:{PORT}", flush=True)
