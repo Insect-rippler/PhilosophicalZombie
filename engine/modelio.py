@@ -115,7 +115,10 @@ def send(body, timeout=(15, 600)):
     """发一轮请求，返回解析后的 JSON；失败记 error 并返回 None。"""
     import requests
     import urllib3
+    import time as _t
+    import runlog
     urllib3.disable_warnings()
+    started = _t.time()
     try:
         r = requests.post(
             core.chat_completions_url,
@@ -125,8 +128,15 @@ def send(body, timeout=(15, 600)):
         )
     except Exception as e:                       # noqa: BLE001
         core.ERROR.append(f"[core.ERROR] 请求失败：{type(e).__name__}: {e}")
+        runlog.log("model.fail", ms=int((_t.time()-started)*1000),
+                   error=f"{type(e).__name__}: {e}"[:160],
+                   stream=bool(body.get("stream")), msgs=len(body.get("messages") or []))
         return None
     if r.status_code != 200:
         core.ERROR.append(f"[core.ERROR] HTTP {r.status_code}: {r.text[:300]}")
+        runlog.log("model.http", ms=int((_t.time()-started)*1000), status=r.status_code)
         return None
+    runlog.log("model.ok", ms=int((_t.time()-started)*1000),
+               stream=bool(body.get("stream")), msgs=len(body.get("messages") or []),
+               usage=(r.json().get("usage") or {}).get("total_tokens"))
     return r.json()

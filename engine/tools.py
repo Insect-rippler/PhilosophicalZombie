@@ -4,6 +4,7 @@ function.json 就是官方 tools 格式；路径表决定脚本，实现表决�
 """
 
 import json
+import runlog
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ import timers
 TOOL_PATHS = {}          # {工具名: 脚本相对路径}
 VIRTUAL_HANDLERS = {}
 TOOL_TIMEOUT = 300
+MAX_TOOL_OUTPUT = 8000
 
 
 def load_registry():
@@ -193,6 +195,8 @@ def virtual_active(raw_args):
 
 
 def execute_tool_call(call, registry):
+    import time as _t
+    _started = _t.time()
     """执行一次 tool_call，返回回灌给模型的文本。
 
     工具约定：stdin 收 JSON 参数，stdout 打 JSON 结果，非 0 退出视为失败。
@@ -233,6 +237,8 @@ def execute_tool_call(call, registry):
     if proc.returncode != 0:
         text = err or out or f"exit {proc.returncode}"
         return f"[失败 exit={proc.returncode}] {text}"
+    runlog.log("tool", name=(call.get("function") or {}).get("name"),
+               ms=int((_t.time() - _started) * 1000))
     return (out or err or "(无输出)")[:MAX_TOOL_OUTPUT]
 
 

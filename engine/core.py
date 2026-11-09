@@ -556,6 +556,27 @@ def appearance_message():
     ]}
 
 
+def sanitize_tool_pairs(messages):
+    """丢掉悬空的 tool_calls：assistant 发了工具却没回执的，把工具调用摘掉。
+
+    写坏的会话（工具崩了没写回执）会让每次请求都 400，必须在发送前清掉。
+    """
+    out = []
+    for index, msg in enumerate(messages):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            ids = {c.get("id") for c in msg["tool_calls"] if isinstance(c, dict)}
+            found, cursor = set(), index + 1
+            while cursor < len(messages) and messages[cursor].get("role") == "tool":
+                found.add(messages[cursor].get("tool_call_id"))
+                cursor += 1
+            if not ids <= found:
+                msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+                if not str(msg.get("content") or "").strip():
+                    continue
+        out.append(msg)
+    return out
+
+
 def build_system(skills_data):
     """六个 system 段落 + 常驻技能，拼成一条消息。"""
     parts = []
@@ -650,6 +671,7 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     # 顺序：session → memory_momentary → lorebook_momentary → skill_knowledge
     #       → state → plan → message
     # message 必须最后：它是唯一要回应的内容；plan 是背景，不能抢它的位置
+    session = sanitize_tool_pairs(session)
     MESSAGES = [system]
     shot = appearance_message()
     if shot:

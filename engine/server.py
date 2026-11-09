@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "engine"))
 
 import body
 import core
+import runlog
 import modelio
 import tools                      # noqa: E402
 from engine import timers        # noqa: E402
@@ -120,6 +121,8 @@ def run_with_tools(payload, emit):
             reasoning_parts = []
             salvage = Salvager()
             buffered = []
+            import time as _sys_t
+            _stream_at = _sys_t.time()
             try:
                 with requests.post(
                     core.chat_completions_url,
@@ -129,7 +132,8 @@ def run_with_tools(payload, emit):
                     verify=core.VERIFY_SSL, proxies={"http": None, "https": None},
                 ) as response:
                     if response.status_code != 200:
-                        raise RuntimeError(f"status {response.status_code}")
+                        raise RuntimeError(f"status {response.status_code}: "
+                                           f"{response.text[:300]}")
                     for raw in response.iter_lines(decode_unicode=False):
                         if not raw:
                             continue
@@ -172,9 +176,15 @@ def run_with_tools(payload, emit):
                                 for event in events:
                                     emit("tool", event)
                 failure = ""
+                runlog.log("stream.ok", ms=int((_sys_t.time()-_stream_at)*1000),
+                           round=_round + 1, calls=len(calls),
+                           chars=sum(len(x) for x in content_parts))
                 break
             except Exception as exc:             # noqa: BLE001
                 failure = f"{type(exc).__name__}: {exc}"
+                runlog.log("stream.fail", ms=int((_sys_t.time()-_stream_at)*1000),
+                           round=_round + 1, attempt=_attempt + 1,
+                           error=failure[:200])
                 log("request.retry", round=_round + 1, attempt=_attempt + 1,
                     error=failure[:120])
                 if _attempt < 2:
@@ -229,7 +239,10 @@ def run_with_tools(payload, emit):
         for call in calls:
             name = (call.get("function") or {}).get("name") or ""
             name, args = name, (call.get("function") or {}).get("arguments") or "{}"
+            runlog.log("tool.begin", name=name,
+                       chars=len(str((call.get("function") or {}).get("arguments") or "")))
             output = tools.execute_tool_call(call, tools.load_registry())
+            runlog.log("tool.done", name=name, out=len(str(output)))
             scene = said = None
             if name == "active":
                 try:
@@ -633,6 +646,9 @@ def kick_maintenance():
 
 def idle_tick():
     """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
+    import time as _tt
+    _t0 = _tt.time()
+    runlog.log("turn.begin", kind="idle")
     kick_maintenance()
     try:
         import impression
@@ -655,6 +671,8 @@ def idle_tick():
         if thought:
             record["reasoning_content"] = thought
         core.append_session([record])
+    runlog.log("turn.end", kind="idle", ms=int((_tt.time()-_t0)*1000),
+               reply=len(reply), chunks=len(chunks))
     return 1 if reply else 0
 
 

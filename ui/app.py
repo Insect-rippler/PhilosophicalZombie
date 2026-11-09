@@ -789,22 +789,7 @@ class ChatPage(QWidget):
         """清掉界面上的消息，从头拉一遍会话和状态。"""
         self._clear_bubbles()
         self.refresh_state()
-        try:
-            rows = api_get("/history?limit=60").get("messages") or []
-        except Exception:                        # noqa: BLE001
-            rows = []
-        for row in rows:
-            role = row.get("role")
-            text = str(row.get("text") or "")
-            if not text:
-                continue
-            if role == "narration":
-                self.add_bubble("narration", text, ts=row.get("ts") or "")
-            elif role == "tip":
-                self.add_bubble("tip", text)
-            elif role in ("user", "assistant"):
-                self.add_bubble(role, text, ts=row.get("ts") or "")
-        self._seen = len(rows)
+        self.load_history()
         self.scroll_to_bottom()
 
     def add_bubble(self, role, text, media=None, ts="", split=True):
