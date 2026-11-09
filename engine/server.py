@@ -643,6 +643,11 @@ def kick_maintenance():
             # 维护会整体重写 session，必须和 /turn 排队，不能并行
             with LOCK:
                 result = maintain.run()
+                try:
+                    import backup
+                    backup.snapshot("maintain")
+                except Exception:            # noqa: BLE001
+                    pass
             log("maintain.done", ok=result.get("ok"), reason=str(result.get("reason") or "")[:60])
         except Exception as exc:           # noqa: BLE001
             log("maintain.failed", error=f"{type(exc).__name__}: {exc}"[:120])
@@ -931,6 +936,11 @@ def idle_loop():
 
 def main():
     import threading
+    try:
+        import backup
+        backup.snapshot("boot")
+    except Exception as exc:                  # noqa: BLE001
+        print("[boot] 备份失败:", exc, flush=True)
     try:
         fixed = core.repair_session()
         if fixed:

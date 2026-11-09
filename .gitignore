@@ -23,6 +23,7 @@ engine/chat_completions.py
 vivarium/
 
 # ============ 处理产物 / 原料 ============
+state/backup/
 state/media/
 state/session/
 state/tmp/
