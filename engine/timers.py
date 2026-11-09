@@ -439,13 +439,12 @@ def set_sleeping(on, now=None):
 
 
 def harness_metabolism():
-    """读 harness.metabolism（耦合表等），拿不到就空。"""
+    """读生理子系统自己的配置：ConsciousnessRealm/body/metabolism.json。"""
     import json as _json
     from pathlib import Path as _Path
+    path = _Path(_paths.ROOT) / "ConsciousnessRealm" / "body" / "metabolism.json"
     try:
-        cfg = _json.loads((_paths.data("Philosophical.json"))
-                          .read_text(encoding="utf-8"))
-        return ((cfg.get("harness") or {}).get("metabolism") or {})
+        return _json.loads(path.read_text(encoding="utf-8")) or {}
     except (OSError, ValueError):
         return {}
 
