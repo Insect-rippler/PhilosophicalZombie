@@ -71,7 +71,8 @@ def describe_tool(name, args, result):
 
 
 INJECTED_TAGS = ("<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
-                 "<state>", "<plan>", "<user>", "<assistant>")
+                 "<state>", "<plan>", "<user>", "<assistant>",
+                 "<impression>", "<appearance>")
 
 
 def strip_context_leak(text):
@@ -371,8 +372,9 @@ def session_history(limit=40):
 
 def usage_window():
     """平均命中的统计窗口，读 harness.usage.avgWindow，限制在 50~300。"""
+    usage_cfg = core.harness.get("usage") or {}
     try:
-        value = int((core.harness.get("usage") or {}).get("maxTurn", 100))
+        value = int(usage_cfg.get("avgWindow") or usage_cfg.get("maxTurn") or 100)
     except (TypeError, ValueError):
         value = 100
     return max(50, min(300, value))

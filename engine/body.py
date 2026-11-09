@@ -571,6 +571,7 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         if raw > cap:
             log("duration.capped", desc=description[:40], slot=verdict["slot"],
                 was=round(raw, 1), cap=cap)
+            verdict["capped_from"] = round(raw, 1)
     if verdict is not None and sleep:
         alarm = _alarm_minutes(sleep)
         if alarm:
@@ -683,7 +684,9 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
     receipt = {
         "line": str(line or "").strip() or None,
         "已执行": (f"动作已受理：{description}，预计 {human_left_sec(verdict['duration'] * 60)}"
-                   f"后完成（{ends}）。{NEXT_STEP}"),
+                   f"后完成（{ends}）。{NEXT_STEP}"
+                   + (f"（原估 {verdict['capped_from']:.0f} 分钟，已按 {verdict['slot']} 上限压缩）"
+                      if verdict.get("capped_from") else "")),
         "ok": True,
     }
     if cancelled:

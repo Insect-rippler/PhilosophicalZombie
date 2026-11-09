@@ -483,6 +483,7 @@ def plan_loading():
 MAX_TOOL_OUTPUT = _num("loop.maxToolOutput", 8000, int)   # 单个工具结果最多回灌多少字
 TOOL_TIMEOUT = _num("subprocess.timeout", 300, int)
 _tools.TOOL_TIMEOUT = TOOL_TIMEOUT
+_tools.MAX_TOOL_OUTPUT = MAX_TOOL_OUTPUT
 
 
 
