@@ -430,6 +430,42 @@ COLLAPSE_FATIGUE = 170         # 疲劳到这个值会累垮
 COLLAPSE_HEALTH = 20           # 健康掉到这个值会倒下
 
 
+def _sleep_window(now):
+    """18:00 ~ 次日 07:00 这一段的起止。"""
+    tm = time.localtime(now)
+    start_hour = 18
+    base = time.mktime((tm.tm_year, tm.tm_mon, tm.tm_mday, start_hour, 0, 0, 0, 0, -1))
+    if tm.tm_hour < 7:
+        base -= 86400                     # 凌晨属于前一晚
+    return base, base + 13 * 3600
+
+
+def note_sleep_start(ch, now):
+    """数这一段里睡了几回；超过三次就记一笔「没安排好作息」。"""
+    start, end = _sleep_window(now)
+    state = ch.setdefault("state", {})
+    stamps = [float(x) for x in (state.get("sleepStarts") or [])
+              if isinstance(x, (int, float)) and start <= float(x) <= end]
+    stamps.append(float(now))
+    state["sleepStarts"] = stamps[-12:]
+    if len(stamps) > 3:
+        tm = time.localtime(now)
+        until = time.mktime((tm.tm_year, tm.tm_mon, tm.tm_mday + (1 if tm.tm_hour >= 18 else 0),
+                             18, 0, 0, 0, 0, -1))
+        state["poorSleep"] = {"until": until, "count": len(stamps)}
+        log("sleep.poor", count=len(stamps), until=time.strftime("%m-%d %H:%M", time.localtime(until)))
+    return len(stamps)
+
+
+def poor_sleep_active(ch, now=None):
+    """今天是不是还在「没睡够」的惩罚期。"""
+    now = time.time() if now is None else float(now)
+    info = (ch.get("state") or {}).get("poorSleep")
+    if not isinstance(info, dict):
+        return False
+    return now < float(info.get("until") or 0)
+
+
 def set_sleeping(on, now=None):
     """切换睡眠状态：醒来时清掉入睡时间。"""
     now = time.time() if now is None else float(now)
@@ -437,6 +473,7 @@ def set_sleeping(on, now=None):
     state = ch.setdefault("state", {})
     if on:
         state["active"] = "sleep"
+        note_sleep_start(ch, now)
         state["sleepStartSleepiness"] = float(
             (ch.get("metabolism") or {}).get("sleepiness", 0))
         state["sleepStartedAt"] = float(now)
@@ -549,6 +586,8 @@ def advance(now=None):
             value=round(value, 1), step=round(step, 2))
 
     coefs = phys_coefficients(ch)
+    if poor_sleep_active(ch):
+        coefs["fatigue"] *= 1.3           # 夜里睡碎了，第二天更容易累
     log("phys.coef", **{k: round(v, 3) for k, v in coefs.items()})
     for key in ("satiety", "hydration", "fatigue", "sleepiness"):
         if key in rates:
@@ -948,6 +987,8 @@ def render_state(ch=None, pending="", now=None, full=False):
     if local:
         lines.append(f"角色当前位置：{local}。")
     lines.extend(render_environment(ch, now))
+    if poor_sleep_active(ch, now):
+        lines.append("没安排好睡眠：昨夜起起睡睡，今天更容易觉得累。")
 
     busy = [t for t in load_timers()
             if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
