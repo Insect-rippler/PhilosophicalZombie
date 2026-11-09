@@ -621,9 +621,6 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         log("suspect_duration", desc=description[:60], minutes=verdict["duration"])
 
     if verdict.get("sleeping"):
-        if float((ch.get("metabolism") or {}).get("sleepiness", 0)) < 55:
-            return {"未执行": "动作未受理：她还不够困，躺下也睡不着。",
-                    "ok": False, "allow": False}
         if (ch.get("state") or {}).get("active") == "sleep":
             return {"line": str(line or "").strip() or None,
                     "已执行": "她已经在睡了。", "ok": True}

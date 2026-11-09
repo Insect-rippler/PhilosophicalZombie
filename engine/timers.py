@@ -369,8 +369,8 @@ def settle(now=None, *, rng=None):
 
 # 每小时变化：运动/睡眠不同。负数是减少，正数是增加。
 RATES = {
-    "awake": {"satiety": -4.0, "hydration": -6.0, "fatigue": +0.5, "sleepiness": +0.5},
-    "sleep": {"satiety": -1.5, "hydration": -2.0, "fatigue": -7.0, "sleepiness": -7.0},
+    "awake": {"satiety": -4.0, "hydration": -4.0, "fatigue": +0.5, "sleepiness": +0.5},
+    "sleep": {"satiety": -1.5, "hydration": -1.5, "fatigue": -7.0, "sleepiness": -7.0},
 }
 MAX_GAP_HOURS = 12
 SLOT_MINUTE_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}
@@ -425,7 +425,7 @@ def set_sleeping(on, now=None):
         state["active"] = "sleep"
         state["sleepStartSleepiness"] = float(
             (ch.get("metabolism") or {}).get("sleepiness", 0))
-        state["sleepStartedAt"] = float(state.get("sleepStartedAt") or now)
+        state["sleepStartedAt"] = float(now)
         log("sleep.on", at=round(now, 1))
     else:
         state["active"] = "wake"
@@ -535,6 +535,14 @@ def advance(now=None):
         log("emotion.drift", band=emo_name, coef=coef,
             value=round(value, 1), step=round(step, 2))
 
+    coefs = phys_coefficients(ch)
+    log("phys.coef", **{k: round(v, 3) for k, v in coefs.items()})
+    for key in ("satiety", "hydration", "fatigue", "sleepiness"):
+        if key in rates:
+            rates[key] *= coefs[key]
+
+    hp_delta = health_delta(ch) * hours if (not sleeping) else 0.0
+
     applied = {}
     for key, rate in rates.items():
         if key not in METABOLISM_RANGE:
@@ -544,6 +552,13 @@ def advance(now=None):
         if round(after, 1) != round(before, 1):
             applied[key] = round(after - before, 1)
         metab[key] = round(after, 3)
+
+    if hp_delta:
+        before = float(metab.get("health", 100))
+        after = max(0.0, min(100.0, before + hp_delta))
+        if round(after, 3) != round(before, 3):
+            applied["health"] = round(after - before, 3)
+        metab["health"] = round(after, 3)
 
     # 体温缓慢回到 36.5
     temp = float(metab.get("bodyTemperature", 36.5))
@@ -585,10 +600,15 @@ def advance(now=None):
         rest = max(0.0, (wake_band - sleepiness_now) / max(1.0, wake_band))
         # 预期睡多久：入睡时的困意掉到「睡透」所需的时间（按 -7/h）
         start_s = float(state.get("sleepStartSleepiness") or sleepiness_now)
-        expect_h = max(0.5, min(9.0, (start_s - SLEEP_REST_TO) / 7.0))
+        health_now = float(metab.get("health", 100))
+        expect_h = max(0.5, (start_s - SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health_now) / 200.0)
         ratio = slept_h / expect_h
         damp = 0.0 if ratio <= SLEEP_RAMP else min(1.0, (ratio - SLEEP_RAMP) / (1.0 - SLEEP_RAMP))
-        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest) * damp
+        effects = stage_effects(ch)
+        need = max(0.0, -(effects.get("satiety", 0) + effects.get("hydration", 0)
+                          + effects.get("fatigue", 0)))
+        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest) * damp * (1.0 + 0.15 * need)
+
         if (sleepiness_now <= wake_band or slept_h >= expect_h) and random.random() < wake_p:
             log("sleep.wake", sleepiness=sleepiness_now, slept=round(slept_h, 2))
             metab["_forceWake"] = 1
@@ -698,6 +718,66 @@ def stage_of(key, value):
         if float(value) < edge or (last and float(value) <= edge):
             return band.get("name") or "", band.get("say") or ""
     return "", ""
+
+
+# ---------------- 生理耦合：阶段影响与权重 ----------------
+STAGE_EFFECT = {
+    "饿坏": -3, "有些饿": -2, "正常": 0, "吃饱": 1,
+    "渴坏": -3, "有些渴": -2, "充足": 1,
+    "精神": 1, "有些累": -1, "很累": -2, "撑不住": -3,
+    "清醒": 1, "犯困": -1, "头昏眼花": -2,
+    "很差": -2, "不佳": -1, "良好": 1,
+}
+# 来源 -> 被影响项 的权重
+WEIGHTS = {
+    "satiety": {"satiety": 0.05, "fatigue": 0.05},
+    "hydration": {"hydration": 0.05, "fatigue": 0.05},
+    "fatigue": {"fatigue": 0.05, "sleepiness": 0.10, "satiety": 0.05, "hydration": 0.05},
+    "sleepiness": {"sleepiness": 0.05, "fatigue": 0.05},
+    "health": {"satiety": 0.03, "hydration": 0.03, "fatigue": 0.03, "sleepiness": 0.03},
+}
+HEALTH_WEIGHTS = {"satiety": 0.20, "hydration": 0.20, "fatigue": 0.20,
+                  "sleepiness": 0.10, "health": 0.10}
+COEF_LOW, COEF_HIGH = 0.8, 1.2
+
+
+def stage_effects(ch):
+    """五项的状态影响值。"""
+    metab = ch.get("metabolism") or {}
+    out = {}
+    for key in ("satiety", "hydration", "fatigue", "sleepiness", "health"):
+        value = metab.get(key)
+        if not isinstance(value, (int, float)):
+            continue
+        name, _ = stage_of(key, value)
+        out[key] = float(STAGE_EFFECT.get(name, 0))
+    return out
+
+
+def phys_coefficients(ch):
+    """每项自己的系数：别人对它的影响加权。"""
+    effects = stage_effects(ch)
+    coefs = {}
+    for target in ("satiety", "hydration", "fatigue", "sleepiness"):
+        total = 0.0
+        for source, weights in WEIGHTS.items():
+            w = weights.get(target)
+            if w:
+                total += w * effects.get(source, 0)
+        coefs[target] = max(COEF_LOW, min(COEF_HIGH, 1.0 - total))
+    return coefs
+
+
+def health_delta(ch):
+    """健康每小时的变化：负面项累加（有上限），没有负面项时才由正面项恢复。"""
+    effects = stage_effects(ch)
+    neg = sum(w * effects.get(src, 0) for src, w in HEALTH_WEIGHTS.items()
+              if effects.get(src, 0) < 0)
+    pos = sum(w * effects.get(src, 0) for src, w in HEALTH_WEIGHTS.items()
+              if effects.get(src, 0) > 0)
+    if neg < 0:
+        return round(max(-2.2, neg * 0.95), 3)
+    return round(min(0.4, pos * 0.25), 3)
 
 
 def snapshot():
@@ -871,10 +951,11 @@ def render_state(ch=None, pending="", now=None, full=False):
         if not isinstance(value, (int, float)):
             continue
         name, say = stage_of(key, value)
+        head = f"{label} {int(round(value))}（{name}）" if full else f"{label}（{name}）"
         if say:
-            lines.append(f"{label} {int(round(value))}（{name}）：{say}")
+            lines.append(f"{head}：{say}")
         elif full:
-            lines.append(f"{label} {int(round(value))}（{name}）")
+            lines.append(head)
     lock = (ch.get("state") or {}).get("emotionLock") or {}
     if lock.get("side") in ("low", "high"):
         where = "跌到分界" if lock["side"] == "low" else "涨到分界"
@@ -885,10 +966,11 @@ def render_state(ch=None, pending="", now=None, full=False):
     emo = (ch.get("emotion") or {}).get("emotion")
     if isinstance(emo, (int, float)):
         name, say = stage_of("emotion", emo)
+        head = f"情绪 {int(round(emo))}（{name}）" if full else f"情绪（{name}）"
         if say:
-            lines.append(f"情绪 {int(round(emo))}（{name}）：{say}")
+            lines.append(f"{head}：{say}")
         elif full:
-            lines.append(f"情绪 {int(round(emo))}（{name}）")
+            lines.append(head)
 
     if pending:
         lines.append(f"刚刚发生：{pending}")
