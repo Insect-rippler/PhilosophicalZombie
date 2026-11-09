@@ -32,8 +32,8 @@ JUDGE = REALM / "judge.json"
 
 from engine import timers  # noqa: E402
 
-SHORT_LIMIT = 1          # short 槽的单件事上限（分钟）
-MAX_MINUTES = 720
+SHORT_LIMIT = 5.3        # short 槽的单件事上限（分钟），与 timers 的 SLOT_MINUTE_CAP 一致
+MAX_MINUTES = 187.0      # long 槽上限，同上
 METAB_KEYS = {"hp", "health", "bodyTemperature", "satiety", "hydration",
               "fatigue", "sleepiness", "sexualDesire"}
 EMOTION_KEYS = {"emotion"}
@@ -341,7 +341,7 @@ def observe():
     return applied or None
 
 
-def judge(description, ch=None, force=False, appeal=None):
+def judge(description, ch=None, force=False, appeal=None, declared_slot=""):
     """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
 
     force=True 表示主代理要打断手上正在做的事：槽位占用不再是阻碍，
@@ -407,10 +407,10 @@ def judge(description, ch=None, force=False, appeal=None):
 
     # 秒级动作不占身；其余按时长归槽，模型声明的 slot 要与估算一致
     instant = False
-    declared = str(data.get("slot") or "").strip().lower()
+    declared = str(declared_slot or data.get("slot") or "").strip().lower()
     slot = declared if declared in ("short", "long") else ("short" if duration <= SHORT_LIMIT else "long")
     if not instant and declared in ("short", "long"):
-        limit = SHORT_LIMIT if declared == "short" else MAX_MINUTES
+        limit = SLOT_CAP.get(declared, MAX_MINUTES)
         if duration > limit:
             allow = False
             reason = (f"预计 {duration} 分钟，超过 {declared} 的 {limit} 分钟上限；"
@@ -527,7 +527,7 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
     now = snap["now"]
     known = str(slot or "").strip().lower() in ("short", "long", "event")
     target_slot = timers.slot_id_for(slot) if known else ""
-    busy = [t for t in timers.blocking_entries(now, grace=0)
+    busy = [t for t in timers.blocking_entries(now)
             if known and (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == target_slot]
     if busy and not force:
         if isinstance(appeal, dict) and appeal.get("reason"):
@@ -555,7 +555,8 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
     if blocked:
         return {"未执行": f"动作未受理：{blocked}。", "ok": False, "allow": False}
 
-    verdict = judge(description, ch=ch, force=force, appeal=appeal)
+    verdict = judge(description, ch=ch, force=force, appeal=appeal,
+                    declared_slot=slot)
     if verdict is not None:
         chosen = str(slot or "").strip().lower()
         if chosen not in ("short", "long", "event"):

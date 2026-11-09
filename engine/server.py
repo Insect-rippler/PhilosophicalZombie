@@ -271,7 +271,7 @@ def run_with_tools(payload, emit):
 
         emit_pending()                     # 先动作，后台词
         core.append_session([assistant] + results)
-        payload = core.context_assemble()
+        payload = core.context_assemble(record=False)     # 工具轮不重复记召回
         body = dict(payload)
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
