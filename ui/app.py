@@ -762,6 +762,37 @@ class ChatPage(QWidget):
         pending = s.get("pending") or []
         self.pending_label.setText(f"{len(pending)} 件事刚发生" if pending else "")
 
+    def _clear_bubbles(self):
+        """把消息区清空（会话被重置时用）。"""
+        while self.messages.count() > 1:
+            item = self.messages.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._seen = 0
+
+    def reload_all(self):
+        """清掉界面上的消息，从头拉一遍会话和状态。"""
+        self._clear_bubbles()
+        self.refresh_state()
+        try:
+            rows = api_get("/history?limit=60").get("messages") or []
+        except Exception:                        # noqa: BLE001
+            rows = []
+        for row in rows:
+            role = row.get("role")
+            text = str(row.get("text") or "")
+            if not text:
+                continue
+            if role == "narration":
+                self.add_bubble("narration", text, ts=row.get("ts") or "")
+            elif role == "tip":
+                self.add_bubble("tip", text)
+            elif role in ("user", "assistant"):
+                self.add_bubble(role, text, ts=row.get("ts") or "")
+        self._seen = len(rows)
+        self.scroll_to_bottom()
+
     def add_bubble(self, role, text, media=None, ts="", split=True):
         if not ts:
             import time as _t
