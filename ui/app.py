@@ -625,12 +625,16 @@ class ChatPage(QWidget):
         except Exception:                    # noqa: BLE001
             return
         if not rows:
+            self._clear_bubbles()
             return
         if self._seen == 0:
             self._seen = len(rows)
             return
-        if len(rows) <= self._seen:
-            self._seen = len(rows)
+        if len(rows) < self._seen:          # 会话被清空或回滚：重画
+            self._clear_bubbles()
+            self._seen = 0
+            return
+        if len(rows) == self._seen:
             return
         for row in rows[self._seen:]:
             role = row.get("role")
