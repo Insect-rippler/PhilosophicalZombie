@@ -58,8 +58,12 @@ except Exception as exc:                       # noqa: BLE001
 try:
     registry = tools.load_registry()
     names = [t["function"]["name"] for t in tools.build_tools(registry)]
-    check("工具注册", len(names) == 14, f"{len(names)} 个: {names[:4]}…")
-    check("脚本路径表", len(tools.TOOL_PATHS) == 11, f"{len(tools.TOOL_PATHS)} 个")
+    # 基础 14 个；本机可能额外挂 function.local.json 里的工具（如 appearance）
+    check("工具注册", len(names) >= 14, f"{len(names)} 个: {names[:4]}…")
+    missing = [n for n, path in tools.TOOL_PATHS.items()
+               if not (Path(r"D:\PhilosophicalZombie") / path).exists()]
+    check("脚本路径表", len(tools.TOOL_PATHS) >= 11 and not missing,
+          f"{len(tools.TOOL_PATHS)} 个，缺失 {missing}")
     check("虚拟工具", set(tools.VIRTUAL_HANDLERS) == {"active", "fight", "alarm"},
           str(list(tools.VIRTUAL_HANDLERS)))
     check("function.json 无 path 泄漏", all("path" not in t for t in tools.build_tools(registry)))
