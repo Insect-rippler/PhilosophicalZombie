@@ -762,6 +762,7 @@ class ChatPage(QWidget):
     def _chat_menu(self, pos):
         """消息区的右键菜单。"""
         menu = QMenu(self)
+        menu.setStyleSheet(PICKER_QSS)
         menu.addAction("刷新", self.reload_all)
         menu.exec(self.scroll.viewport().mapToGlobal(pos))
 
