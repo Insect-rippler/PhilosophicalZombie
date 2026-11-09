@@ -190,6 +190,7 @@ def occupancy(now=None):
 
 
 def blocking_entries(now=None, grace=None):
+    """占着槽位、还没到点的条目。没有宽限：该占多久就占多久。"""
     """占着槽位、还没到点的条目。与 occupancy 用同一套判定。"""
     now = time.time() if now is None else float(now)
     grace = GRACE_SECONDS if grace is None else float(grace)
@@ -200,7 +201,7 @@ def blocking_entries(now=None, grace=None):
             sid = slot_id_for(entry.get("slot"))
         if not sid:
             continue
-        if float(entry.get("at") or 0) > now + grace:
+        if float(entry.get("at") or 0) > now:
             out.append(entry)
     return out
 
@@ -378,7 +379,7 @@ RATES = {
 }
 MAX_GAP_HOURS = 12
 SLOT_MINUTE_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}
-GRACE_SECONDS = 3        # 剩余不足这么多秒的条目不算占用
+GRACE_SECONDS = 0        # 已取消宽限，保留常量只为兼容旧调用
 MAINTAIN_AFTER_HOURS = 3      # 睡着超过这么久，就该跑一次维护
 MAINTENANCE = _paths.data("realTime", "maintenance.json")          # 一次结算最多补 12 小时，再长就当睡过去了
 
