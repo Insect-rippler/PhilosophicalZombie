@@ -544,7 +544,11 @@ def build_system(skills_data):
             ERROR.append(f"[ERROR] 系统文件不存在：{item_path}")
             continue
         content = increase_heading_level(item_path.read_text(encoding="utf-8")).strip()
-        if content:
+        if not content:
+            continue
+        if filename == "USER":
+            parts.append(f"<impression>\n\n{content}\n\n</impression>")
+        else:
             parts.append(f"# {filename}\n\n{content}")
 
     constant = [s for s in skills_data
