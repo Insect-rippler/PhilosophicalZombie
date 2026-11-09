@@ -636,7 +636,9 @@ def kick_maintenance():
 
     def job():
         try:
-            result = maintain.run()
+            # 维护会整体重写 session，必须和 /turn 排队，不能并行
+            with LOCK:
+                result = maintain.run()
             log("maintain.done", ok=result.get("ok"), reason=str(result.get("reason") or "")[:60])
         except Exception as exc:           # noqa: BLE001
             log("maintain.failed", error=f"{type(exc).__name__}: {exc}"[:120])
