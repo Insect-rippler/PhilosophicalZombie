@@ -242,15 +242,42 @@ def backup(files):
     return folder
 
 
-def find_block(text, title, level):
-    """定位 `#* title` 这一段，返回 (start, end)；找不到返回 None。"""
+def find_block(text, title, level, near=None):
+    """定位 `#* title` 这一段，返回 (start, end)。
+
+    找不到标题时退回按条目找：PERSONA 的主体是 `- ` 开头的条目，
+    只认标题的话 stage3 的 update / merge 永远改不到它们。
+    """
     tag = "#" * level
     m = re.search(rf"^{tag} {re.escape(title)}[ \t]*$", text, re.M)
-    if not m:
+    if m:
+        tail = text[m.end():]
+        nxt = re.search(rf"^#{{1,{level}}} ", tail, re.M)
+        return m.start(), m.end() + (nxt.start() if nxt else len(tail))
+
+    needle = (title or "").strip()
+    if not needle:
         return None
-    tail = text[m.end():]
-    nxt = re.search(rf"^#{{1,{level}}} ", tail, re.M)
-    return m.start(), m.end() + (nxt.start() if nxt else len(tail))
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("- ") and needle in stripped:
+            begin = offset
+            stop = offset + len(line)
+            # 把缩进的续行也算进这一条
+            cursor = stop
+            for extra in text[stop:].splitlines(keepends=True):
+                chunk = extra.strip()
+                if not chunk or chunk.startswith("- ") or chunk.startswith("#"):
+                    break
+                cursor += len(extra)
+            return begin, cursor
+        offset += len(line)
+    return None
+
+
+def _is_bullet(text, start):
+    return text[start:start + 2] == "- "
 
 
 def replace_block(text, title, level, body):
@@ -258,6 +285,11 @@ def replace_block(text, title, level, body):
     if not span:
         return text, False
     s, e = span
+    if _is_bullet(text, s):
+        # 保持条目形态，不把 bullet 抬成标题
+        line = "- " + " ".join(body.split())
+        suffix = "" if text[e - 1:e] in ("\n", "") else "\n"
+        return text[:s] + line + suffix + text[e:], True
     tag = "#" * level
     return text[:s] + f"{tag} {title}\n\n{body.strip()}\n\n" + text[e:], True
 
