@@ -1104,7 +1104,8 @@ def main(argv=None):
         print(f"计时器 {len(timers)} 条")
         for t in sorted(timers, key=lambda x: float(x.get("at") or 0)):
             left = float(t.get("at") or 0) - now
-            print(f"  {t.get('id')}  {t.get('kind'):<6} {t.get('slot'):<5} "
+            slot = str(t.get("slot") or "-")
+            print(f"  {t.get('id')}  {str(t.get('kind') or '-'):<6} {slot:<5} "
                   f"{'已过期' if left <= 0 else f'还剩 {left/60:.0f} 分'}  {t.get('semantic', '')[:30]}")
         pool = peek_pending()
         if pool:
