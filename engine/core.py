@@ -566,9 +566,18 @@ def repair_messages(messages):
     所以发送前和启动时都要过一遍。
     """
     fixed, changed = [], False
+    tags = ("<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
+            "<state>", "<plan>", "<user>", "<assistant>", "<impression>")
     index = 0
     while index < len(messages):
         msg = messages[index]
+        if msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
+            text = msg["content"]
+            cut = min((text.find(t) for t in tags if t in text), default=-1)
+            if cut >= 0:
+                msg = dict(msg, content=text[:cut].rstrip())
+                messages[index] = msg
+                changed = True
         fixed.append(msg)
         index += 1
         if msg.get("role") != "assistant" or not msg.get("tool_calls"):

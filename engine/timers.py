@@ -988,7 +988,7 @@ def render_state(ch=None, pending="", now=None, full=False):
         lines.append(f"角色当前位置：{local}。")
     lines.extend(render_environment(ch, now))
     if poor_sleep_active(ch, now):
-        lines.append("没安排好睡眠：昨夜起起睡睡，今天更容易觉得累。")
+        lines.append("没安排好睡眠：由于昨天睡觉时角色尚无困意且昨夜反复起起睡睡，今天更容易觉得累。")
 
     busy = [t for t in load_timers()
             if t.get("kind") == "action" and float(t.get("at") or 0) > moment]

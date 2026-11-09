@@ -231,7 +231,8 @@ def run_with_tools(payload, emit):
             return True, pending_text
 
 
-        assistant = {"role": "assistant", "content": "".join(content_parts)}
+        assistant = {"role": "assistant",
+                 "content": strip_context_leak("".join(content_parts))}
         if reasoning_parts:
             assistant["reasoning_content"] = "".join(reasoning_parts)
         assistant["tool_calls"] = calls
