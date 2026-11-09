@@ -373,7 +373,7 @@ RATES = {
     "sleep": {"satiety": -1.5, "hydration": -2.0, "fatigue": -7.0, "sleepiness": -7.0},
 }
 MAX_GAP_HOURS = 12
-SLOT_MINUTE_CAP = {"short": 5.0, "long": 180.0, "event": 480.0}
+SLOT_MINUTE_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}
 GRACE_SECONDS = 3        # 剩余不足这么多秒的条目不算占用
 MAINTAIN_AFTER_HOURS = 3      # 睡着超过这么久，就该跑一次维护
 MAINTENANCE = _paths.data("realTime", "maintenance.json")          # 一次结算最多补 12 小时，再长就当睡过去了
@@ -405,7 +405,9 @@ def sleepiness_base(hour):
 
 
 SLEEP_FORCE_CHANCE = 0.01      # 困到极限后每 tick 昏迷的概率
-SLEEP_WAKE_CHANCE = 0.08       # 睡够之后每 tick 醒来的概率
+SLEEP_WAKE_CHANCE = 0.08
+SLEEP_REST_TO = 10.0             # 困意掉到这个值，算睡透
+SLEEP_RAMP = 0.85                # 睡到预期时长的这个比例，才开始掷骰子       # 睡够之后每 tick 醒来的概率
 SLEEP_FORCE_AT = 90            # 困意进入 [90,100] 段才可能昏迷
 SLEEPY_BAND = 60               # 进入犯困段
 WAKE_BAND = 30                 # 醒来段：困意低于此值才计算苏醒概率
@@ -421,6 +423,8 @@ def set_sleeping(on, now=None):
     state = ch.setdefault("state", {})
     if on:
         state["active"] = "sleep"
+        state["sleepStartSleepiness"] = float(
+            (ch.get("metabolism") or {}).get("sleepiness", 0))
         state["sleepStartedAt"] = float(state.get("sleepStartedAt") or now)
         log("sleep.on", at=round(now, 1))
     else:
@@ -570,12 +574,22 @@ def advance(now=None):
             fatigue=fatigue_now, health=health_now)
         sleeping = True
         metab["_forceSleep"] = 1
+        where = str(ch.get("local") or "原地")
+        reason_text = {"困到极限": "撑不住了，就地闭了眼",
+                       "累垮了": "再也撑不住，腿一软坐倒下去",
+                       "身体撑不住": "眼前一黑，倒了下去"}.get(collapse, "倒了下去")
+        push_pending([f"她{reason_text}（{where}），之后的事她不记得。"], now)
     elif sleeping:
         slept_h = ((now - float(state.get("sleepStartedAt") or now)) / 3600)
         # 困意越低越睡得浅：这是身体自己醒，不是闹钟
         rest = max(0.0, (wake_band - sleepiness_now) / max(1.0, wake_band))
-        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest)      # 到点后 8%~16%/tick
-        if sleepiness_now <= wake_band and random.random() < wake_p:
+        # 预期睡多久：入睡时的困意掉到「睡透」所需的时间（按 -7/h）
+        start_s = float(state.get("sleepStartSleepiness") or sleepiness_now)
+        expect_h = max(0.5, min(9.0, (start_s - SLEEP_REST_TO) / 7.0))
+        ratio = slept_h / expect_h
+        damp = 0.0 if ratio <= SLEEP_RAMP else min(1.0, (ratio - SLEEP_RAMP) / (1.0 - SLEEP_RAMP))
+        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest) * damp
+        if (sleepiness_now <= wake_band or slept_h >= expect_h) and random.random() < wake_p:
             log("sleep.wake", sleepiness=sleepiness_now, slept=round(slept_h, 2))
             metab["_forceWake"] = 1
 
@@ -707,6 +721,82 @@ def tick_lock():
         _write(CHARACTER, ch)
 
 
+PLACES_PATH = _paths.data("world", "places.json") if False else None
+
+
+def places():
+    """地点表：地点名 -> 属性。"""
+    path = _paths.ROOT / "ConsciousnessRealm" / "world" / "places.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def place_of(local):
+    """从「城/地点」里取地点名，匹配地点表。"""
+    local = str(local or "")
+    for name in places():
+        if name in local:
+            return name
+    return ""
+
+
+def relations(ch):
+    """角色记得的人：{名字: {trust, met}}。"""
+    rel = ch.get("relations")
+    return rel if isinstance(rel, dict) else {}
+
+
+def touch_relation(ch, name, trust=0, met=1):
+    """记一次来往。"""
+    if not name:
+        return
+    rel = ch.setdefault("relations", {})
+    item = rel.setdefault(name, {"trust": 30, "met": 0})
+    item["met"] = int(item.get("met") or 0) + met
+    item["trust"] = max(0, min(100, float(item.get("trust") or 30) + trust))
+    item["last"] = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+
+
+def render_environment(ch, now=None):
+    """环境与风险：给主代理判断处境用的材料。"""
+    now = time.time() if now is None else float(now)
+    hour = time.localtime(now).tm_hour
+    night = hour >= 21 or hour < 6
+    local = str(ch.get("local") or "")
+    name = place_of(local)
+    if not name:
+        return []
+    info = places().get(name) or {}
+    bits = [f"所处环境：{local}"]
+    bits.append("室内" if info.get("indoor") else "露天")
+    if info.get("private"):
+        bits.append("她自己的地方")
+    else:
+        bits.append(f"夜里{info.get('nightCrowd') or '情况不明'}" if night
+                    else "白天有人来往")
+    risk = int(info.get("risky") or 0)
+    if night:
+        risk += 1
+    level = "低" if risk <= 1 else ("中" if risk <= 3 else "高")
+    bits.append(f"此时风险：{level}")
+    lines = [" · ".join(bits)]
+
+    known = relations(ch)
+    regulars = [r for r in (info.get("regulars") or [])]
+    if regulars:
+        shown = []
+        for who in regulars:
+            item = known.get(who)
+            if item:
+                shown.append(f"{who}（来往 {int(item.get('met') or 0)} 次，信任 {int(item.get('trust') or 0)}）")
+            else:
+                shown.append(f"{who}（只是认得）")
+        lines.append("此处常见：" + "、".join(shown))
+    return lines
+
+
 def render_state(ch=None, pending="", now=None, full=False):
     """渲染 <state> 的内容行。这是常驻信息：时间、位置、身体状况、刚发生的事。"""
     ch = ch if isinstance(ch, dict) else load_character()
@@ -751,6 +841,7 @@ def render_state(ch=None, pending="", now=None, full=False):
     local = str(ch.get("local") or "").strip()
     if local:
         lines.append(f"角色当前位置：{local}。")
+    lines.extend(render_environment(ch, now))
 
     busy = [t for t in load_timers()
             if t.get("kind") == "action" and float(t.get("at") or 0) > moment]

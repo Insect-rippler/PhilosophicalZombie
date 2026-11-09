@@ -163,8 +163,6 @@ SLICE_FLOOR = _num("retrieval.memory.sliceFloor", 0.55, float)
 SLICE_MARGIN = _num("retrieval.memory.sliceMargin", 0.08, float)
 BLOCK_FLOOR = _num("retrieval.memory.blockFloor", 0.40, float)
 
-LOREBOOK_MAX_ITEMS = _num("retrieval.lorebook.maxItems", 12)
-LOREBOOK_BUDGET_CHARS = _num("retrieval.lorebook.budgetChars", 2000)
 
 # api key 不是请求体参数：单独拿出，组装出的 payload 里不含它
 API_KEY = payload.pop("api", "")
@@ -286,125 +284,14 @@ def search_text_make(session, user_message=None):
 
 
 
-_ROLE_TAG = re.compile(r"<(?:user|assistant|system)><([^>]*)>\s*")
-_BARE_TAG = re.compile(r"<[a-z_]+>\s*")
 
 
-def render_transcript(text):
-    """把切片的原始转写改写成干净文本。
-
-    切片里带着 `{...}` 外壳和 `<user><名字>` / `<assistant><名字>` 标记。
-    这些尖括号标记与本项目的分区标签同形，混进上下文会让模型误以为
-    是 session 里的对话，所以在注入前全部抹掉，改成人名加冒号。
-    """
-    text = (text or "").strip()
-    if text.startswith("{") and text.endswith("}"):
-        text = text[1:-1].strip()
-    text = _ROLE_TAG.sub(lambda m: (m.group(1) + "：") if m.group(1) else "", text)
-    text = _BARE_TAG.sub("", text)
-    return text.strip()
 
 
-def memory_recall(search_text, record=True):
-    """返回 <memory_momentary> 块，没有命中返回空串。
-
-    切片与记忆块**分别检索**：混在一起全局排序时，分数低的块会被切片挤掉，
-    而块恰恰是最精确的答案（短、密度高）。
-    """
-    if memory_search is None or not search_text:
-        return ""
-
-    try:
-        slices = memory_search(search_text, top_k=MEMORY_TOP_K, kind="slice",
-                               min_score=SLICE_FLOOR, record=False)
-        blocks = memory_search(search_text, top_k=BLOCK_TOP_K, kind="block",
-                               min_score=None, record=False)
-    except Exception as e:                   # noqa: BLE001
-        ERROR.append(f"[ERROR] 记忆检索失败：{type(e).__name__}: {e}")
-        return ""
-
-    blocks = [b for b in blocks if b["score"] >= BLOCK_FLOOR]
-    if slices:
-        # 主题集中时多收几条；主题稀薄时只留最相关的
-        best = max(h["score"] for h in slices)
-        floor = max(SLICE_FLOOR, best - SLICE_MARGIN)
-        slices = [h for h in slices if h["score"] >= floor]
-
-    kept = blocks + slices
-    if not kept:
-        return ""
-    kept.sort(key=lambda h: (h["kind"] != "block", -h["score"]))
-    kept = kept[:MEMORY_TOP_K + BLOCK_TOP_K]
-
-    if record and memory_lib is not None and os.environ.get("PZ_TEST") != "1":
-        try:
-            memory_lib().record([{"id": h["id"], "chars": h["chars"]} for h in kept])
-        except Exception as e:               # noqa: BLE001
-            ERROR.append(f"[WARN] 命中计数失败：{type(e).__name__}: {e}")
-
-    log("memory_recall", query_chars=len(search_text or ""), hits=len(kept))
-
-    blocks_kept = [h for h in kept if h["kind"] == "block"]
-    slices_kept = [h for h in kept if h["kind"] == "slice"]
-
-    parts = []
-    if blocks_kept:
-        parts.append("## 我记得\n" + "\n".join(f"- {h['text'].strip()}" for h in blocks_kept))
-    if slices_kept:
-        parts.append("## 当时的原话\n" + "\n\n".join(render_transcript(h["text"]) for h in slices_kept))
-    body = "\n\n".join(parts)
-    return f"<memory_momentary>\n{body}\n</memory_momentary>"
 
 
-def lorebook_recall(search_text):
-    """返回 <lorebook_momentary> 块，没有命中返回空串。"""
-    if lorebook_lookup is None or not search_text:
-        return ""
-    try:
-        log("lorebook_recall", query_chars=len(search_text or ""))
-        hits = lorebook_lookup(search_text, max_items=LOREBOOK_MAX_ITEMS,
-                               budget_chars=LOREBOOK_BUDGET_CHARS)
-    except Exception as e:                   # noqa: BLE001
-        ERROR.append(f"[ERROR] 世界书检索失败：{type(e).__name__}: {e}")
-        return ""
-    if not hits:
-        return ""
-    # 按命中标签数排序（lookup 已排序，这里保持稳定），同一 tags 归到一组
-    groups = {}
-    for h in hits:
-        key = (h.get("tags") or ["其他"])[0]
-        groups.setdefault(key, []).append(h)
-    sections = []
-    for key, items in groups.items():
-        lines = [f"## {h['title']}\n\n{h['text'].strip()}" for h in items]
-        sections.append(f"# {key}\n\n" + "\n\n".join(lines))
-    return "<lorebook_momentary>\n" + "\n\n".join(sections) + "\n</lorebook_momentary>"
 
 
-def skill_recall(skills_data, search_text, limit=2):
-    """非常驻技能：关键词命中即召回，命中越多越靠前；只按条数截断，不切字数。"""
-    if not skills_data or not search_text:
-        return ""
-    low = search_text.lower()
-    hits = []
-    for skill in skills_data:
-        if skill.get("constant"):
-            continue
-        keys = [k for k in (skill.get("keywords") or []) if isinstance(k, str) and len(k) >= 2]
-        matched = [k for k in keys if k.lower() in low]
-        if not matched:
-            continue
-        hits.append((len(matched), max(len(k) for k in matched),
-                     int(skill.get("timestamp") or 0), skill))
-
-    if not hits:
-        return ""
-    hits.sort(key=lambda item: (-item[0], -item[1], -item[2]))
-    body = "\n\n".join(
-        f"## {skill.get('title', '')}\n\n{increase_heading_level(str(skill.get('content') or ''))}"
-        for _, _, _, skill in hits[:limit]
-    )
-    return f"<skill_knowledge>\n{body}\n</skill_knowledge>"
 
 
 COMPRESSION_NOTICE = (
@@ -691,12 +578,13 @@ def load_skills():
 
 
 def build_blocks(search_text, skills_data, record=True):
+    import recall
     """检索类背景块。一轮对话里只算一次——工具循环的后续轮次复用同一份。"""
     blocks = []
     for name, block in (
-        ("memory", memory_recall(search_text, record=record)),
-        ("lorebook", lorebook_recall(search_text)),
-        ("skill", skill_recall(skills_data, search_text)),
+        ("memory", recall.memory_recall(search_text, record=record)),
+        ("lorebook", recall.lorebook_recall(search_text)),
+        ("skill", recall.skill_recall(skills_data, search_text)),
         ("state", state_loading()),
         ("plan", plan_loading()),
     ):
@@ -779,63 +667,11 @@ COMPRESSION_THRESHOLD = int(
 )
 
 
-def usage_numbers(usage):
-    """从服务端返回的 usage 里取实数，不做任何估算。
-
-    chat 接口：prompt_tokens / completion_tokens / total_tokens
-              prompt_cache_hit_tokens / prompt_cache_miss_tokens
-    兼容 responses 接口的 input_tokens / output_tokens / input_tokens_details。
-    """
-    usage = usage or {}
-    prompt = usage.get("prompt_tokens")
-    if prompt is None:
-        prompt = usage.get("input_tokens")
-    completion = usage.get("completion_tokens")
-    if completion is None:
-        completion = usage.get("output_tokens")
-    hit = usage.get("prompt_cache_hit_tokens")
-    if hit is None:
-        hit = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-               or (usage.get("input_tokens_details") or {}).get("cached_tokens"))
-    hit = int(hit or 0)
-    prompt = int(prompt or 0)
-    completion = int(completion or 0)
-    total = int(usage.get("total_tokens") or (prompt + completion))
-    return {
-        "prompt": prompt,
-        "completion": completion,
-        "total": total,
-        "cache_hit": hit,
-        "cache_miss": int(usage.get("prompt_cache_miss_tokens") or max(prompt - hit, 0)),
-        "cache_rate": round(100 * hit / prompt, 2) if prompt else 0.0,
-    }
 
 
 LAST_PROMPT_TOKENS = 0     # 上一次请求的实际 prompt_tokens，压缩提示用
 
 
-def record_usage(usage, *, turn_id="", round_no=0, speaker=""):
-    """追加一条 usage 记录到 state/usage/YYYY-MM-DD.jsonl，返回这条记录。"""
-    global LAST_PROMPT_TOKENS
-    n = usage_numbers(usage)
-    if n["prompt"]:
-        LAST_PROMPT_TOKENS = n["prompt"]
-    rec = {
-        "ts": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
-        "turn": turn_id,
-        "round": round_no,
-        "model": payload.get("model", ""),
-        "speaker": speaker,
-        **n,
-    }
-    try:
-        USAGE_DIR.mkdir(parents=True, exist_ok=True)
-        path = USAGE_DIR / (__import__("time").strftime("%Y-%m-%d") + ".jsonl")
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except OSError as e:
-        ERROR.append(f"[WARN] usage 落盘失败：{e}")
-    return rec
 
 
 # ---------------- 快照（调试用） ----------------
@@ -846,73 +682,8 @@ DUMP_DIR = _paths.data("tmp", "payload")
 BLOCK_NAMES = {"memory", "lorebook", "skill", "state", "plan"}
 
 
-def dump_payload(assembled, turn_id, round_no):
-    """发送前落一份快照，用来核对上下文组装是否正确。
-
-    debug.dump     → 完整 payload
-    debug.dumpTail → 只展开易变的部分（检索块 + 本轮消息），system 与 session 只留摘要
-    返回快照路径；两个开关都关时返回 None。
-    """
-    if not (DEBUG_DUMP or DEBUG_DUMP_TAIL):
-        return None
-    messages = assembled.get("messages") or []
-
-    if DEBUG_DUMP and not DEBUG_DUMP_TAIL:
-        data = dict(assembled)
-    else:
-        last = len(messages) - 1
-        rows = []
-        for i, m in enumerate(messages):
-            content = m.get("content") or ""
-            expand = i == last or (m.get("name") in BLOCK_NAMES)
-            row = {"i": i, "role": m.get("role", "")}
-            if m.get("name"):
-                row["name"] = m["name"]
-            if m.get("tool_calls"):
-                row["tool_calls"] = [c.get("function", {}).get("name") for c in m["tool_calls"]]
-            if m.get("tool_call_id"):
-                row["tool_call_id"] = m["tool_call_id"]
-            row["chars"] = len(content)
-            if expand:
-                row["content"] = content
-            else:
-                row["head"] = content[:80].replace("\n", " ")
-            rows.append(row)
-        data = {
-            "turn": turn_id,
-            "round": round_no,
-            "model": assembled.get("model"),
-            "tools": [t.get("function", {}).get("name") for t in assembled.get("tools") or []],
-            "total_messages": len(messages),
-            "total_chars": sum(len(m.get("content") or "") for m in messages),
-            "messages": rows,
-        }
-
-    DUMP_DIR.mkdir(parents=True, exist_ok=True)
-    path = DUMP_DIR / f"{turn_id}-r{round_no}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
 
 
-def send(body, timeout=(15, 600)):
-    """发一轮请求，返回解析后的 JSON；失败记 error 并返回 None。"""
-    import requests
-    import urllib3
-    urllib3.disable_warnings()
-    try:
-        r = requests.post(
-            chat_completions_url,
-            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json=body, timeout=timeout, verify=VERIFY_SSL,
-            proxies={"http": None, "https": None},
-        )
-    except Exception as e:                       # noqa: BLE001
-        ERROR.append(f"[ERROR] 请求失败：{type(e).__name__}: {e}")
-        return None
-    if r.status_code != 200:
-        ERROR.append(f"[ERROR] HTTP {r.status_code}: {r.text[:300]}")
-        return None
-    return r.json()
 
 
 def main(argv=None):
@@ -953,17 +724,17 @@ def main(argv=None):
 
         print(f"\n--- 第 {round_no} 轮：{len(assembled['messages'])} 条消息，"
               f"{sum(len(m.get('content', '')) for m in assembled['messages'])} 字 ---")
-        snap = dump_payload(assembled, turn_id, round_no)
+        snap = modelio.dump_payload(assembled, turn_id, round_no)
         if snap:
             print(f"  快照 → {snap.relative_to(ROOT)}")
 
-        response = send(assembled)
+        response = modelio.send(assembled)
         if response is None:
             for e in ERROR:
                 print("  " + e, file=sys.stderr)
             return 1
 
-        rec = record_usage(response.get("usage"), turn_id=turn_id, round_no=round_no,
+        rec = modelio.record_usage(response.get("usage"), turn_id=turn_id, round_no=round_no,
                            speaker=payload.get("user_id", ""))
         turn_records.append(rec)
         print(f"  usage: prompt={rec['prompt']} completion={rec['completion']} "

@@ -9,6 +9,7 @@ realm 全在 `ConsciousnessRealm/body/`：`rule.md` 说它是谁，`judge.json` 
 """
 
 import json
+import modelio
 import paths as _paths
 
 try:
@@ -212,7 +213,7 @@ def _body_thinking():
         return False
 
 
-SLOT_CAP = {"short": 5.0, "long": 180.0, "event": 480.0}   # 分钟
+SLOT_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}   # 分钟
 
 
 EFFORT_RATE = {"轻": 4.0, "中": 8.0, "重": 16.0}   # 每小时疲惫
@@ -321,7 +322,7 @@ def observe():
         "response_format": {"type": "json_object"},
         "max_tokens": 600,
     }
-    data = core.send(payload) or {}
+    data = modelio.send(payload) or {}
     content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
     if not content:
         log("observe.empty")
@@ -355,7 +356,7 @@ def judge(description, ch=None, force=False, appeal=None):
               "\"duration\":分钟数, \"effort\":\"轻|中|重\", "
               "\"location\":\"只有她明显转移到新地点时才填（如「奥格尼斯科/她的房间」），"
               "原地的小动作一律留空字符串\", "
-              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"sleeping\":false, \"text\":\"到点后显示的一句话\"}")
+              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"people\":[{\"name\":\"\",\"trust\":0}], \"sleeping\":false, \"text\":\"到点后显示的一句话\"}")
     appeal_text = ""
     if isinstance(appeal, dict) and appeal:
         appeal_text = (f"## 她的申辩\n\n理由：{appeal.get('reason')}；"
@@ -386,7 +387,7 @@ def judge(description, ch=None, force=False, appeal=None):
         "thinking": {"type": "enabled" if _body_thinking() else "disabled"},
         "response_format": {"type": "json_object"},
     }
-    response = core.send(body)
+    response = modelio.send(body)
     if not response:
         return None
     content = ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
@@ -456,6 +457,7 @@ def judge(description, ch=None, force=False, appeal=None):
         "slotId": timers.slot_id_for(slot),
         "location": location,
         "reward": _clean_reward(data.get("reward")),
+        "people": data.get("people") if isinstance(data.get("people"), list) else [],
         "text": text,
         "raw": data,
     }
@@ -523,9 +525,10 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         timers._write(timers.CHARACTER, ch_break)
     ch = ch if isinstance(ch, dict) else snap["ch"]
     now = snap["now"]
-    target_slot = timers.slot_id_for(slot)
+    known = str(slot or "").strip().lower() in ("short", "long", "event")
+    target_slot = timers.slot_id_for(slot) if known else ""
     busy = [t for t in timers.blocking_entries(now, grace=0)
-            if (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == target_slot]
+            if known and (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == target_slot]
     if busy and not force:
         if isinstance(appeal, dict) and appeal.get("reason"):
             target = busy[0]
@@ -553,11 +556,20 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         return {"未执行": f"动作未受理：{blocked}。", "ok": False, "allow": False}
 
     verdict = judge(description, ch=ch, force=force, appeal=appeal)
-    if verdict is not None and str(slot or "").strip() in ("short", "long", "event"):
-        verdict["slot"] = str(slot).strip()          # 槽位由递交方决定，body 只判时长
+    if verdict is not None:
+        chosen = str(slot or "").strip().lower()
+        if chosen not in ("short", "long", "event"):
+            minutes = float(verdict.get("duration") or 0)
+            chosen = "short" if minutes <= 5 else ("long" if minutes <= 180 else "event")
+            log("slot.auto", minutes=round(minutes, 1), slot=chosen)
+        verdict["slot"] = chosen
         verdict["slotId"] = timers.slot_id_for(verdict["slot"])
         cap = SLOT_CAP.get(verdict["slot"], 180.0)
-        verdict["duration"] = min(float(verdict.get("duration") or 0), cap)
+        raw = float(verdict.get("duration") or 0)
+        verdict["duration"] = min(raw, cap)
+        if raw > cap:
+            log("duration.capped", desc=description[:40], slot=verdict["slot"],
+                was=round(raw, 1), cap=cap)
     if verdict is not None and sleep:
         alarm = _alarm_minutes(sleep)
         if alarm:
@@ -568,6 +580,18 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             verdict["sleeping"] = True            # 只说“要睡”，时长交给 body
     if verdict is None:
         return {"ok": False, "reason": "判定失败：body 没有返回可解析的结果", "degraded": True}
+
+    for who in (verdict.get("people") or []):
+        if not isinstance(who, dict):
+            continue
+        name = str(who.get("name") or "").strip()
+        if not name:
+            continue
+        trust = who.get("trust") if isinstance(who.get("trust"), (int, float)) else 0
+        timers.touch_relation(ch, name, trust=float(trust))
+        log("relation", name=name[:16], trust=round(float(trust), 1))
+    if verdict.get("people"):
+        timers._write(timers.CHARACTER, ch)
 
     if not verdict["allow"]:
         return _reject(None, verdict["reason"] or "她现在的状态做不了这件事")

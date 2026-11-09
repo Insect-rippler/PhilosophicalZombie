@@ -33,6 +33,7 @@ PLAN_GLOB = REALM / "plan" / "archive"
 DREAM_DIR = _paths.data("dream")
 
 import core
+import modelio
 import tools  # noqa: E402
 
 
@@ -118,7 +119,7 @@ def call_model(system_text, user_text, max_tokens=MAX_MODEL_TOKENS):
         "thinking": {"type": "disabled"},
         "response_format": {"type": "json_object"},
     }
-    response = core.send(body)
+    response = modelio.send(body)
     if not response:
         return None
     content = ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""

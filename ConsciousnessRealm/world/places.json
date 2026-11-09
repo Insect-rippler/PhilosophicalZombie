@@ -1,0 +1,55 @@
+{
+  "主街": {
+    "public": true,
+    "nightCrowd": "稀少",
+    "risky": 2,
+    "regulars": [
+      "花贩",
+      "市政厅职员"
+    ],
+    "indoor": false
+  },
+  "集市": {
+    "public": true,
+    "nightCrowd": "无人",
+    "risky": 2,
+    "regulars": [
+      "花贩",
+      "面包房掌柜"
+    ],
+    "indoor": false
+  },
+  "面包房": {
+    "public": true,
+    "nightCrowd": "极少",
+    "risky": 1,
+    "regulars": [
+      "面包房掌柜"
+    ],
+    "indoor": true
+  },
+  "工坊区": {
+    "public": true,
+    "nightCrowd": "稀少",
+    "risky": 1,
+    "regulars": [
+      "奥比娜"
+    ],
+    "indoor": true
+  },
+  "河沿": {
+    "public": false,
+    "nightCrowd": "无人",
+    "risky": 4,
+    "regulars": [],
+    "indoor": false
+  },
+  "她的房间": {
+    "public": false,
+    "private": true,
+    "nightCrowd": "无人",
+    "risky": 0,
+    "regulars": [],
+    "indoor": true
+  }
+}

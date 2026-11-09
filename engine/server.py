@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "engine"))
 
 import body
 import core
+import modelio
 import tools                      # noqa: E402
 from engine import timers        # noqa: E402
 
@@ -198,7 +199,7 @@ def run_with_tools(payload, emit):
 
         if usage:
             try:
-                rec = core.record_usage(usage, round_no=_round + 1)
+                rec = modelio.record_usage(usage, round_no=_round + 1)
                 emit("usage", {"round": _round + 1,
                                "prompt": rec["prompt"],
                                "completion": rec["completion"],
@@ -273,7 +274,7 @@ def run_with_tools(payload, emit):
                 if not (m.get("role") == "assistant" and m.get("tool_calls"))
             ] + [{"role": "system",
                   "content": "只输出角色这一轮说出口的一句话。不要旁白、不要括号、不要解释。"}]
-            response = core.send(plain)
+            response = modelio.send(plain)
             if response:
                 text = ((response.get("choices") or [{}])[0]
                         .get("message") or {}).get("content") or ""

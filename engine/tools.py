@@ -179,12 +179,14 @@ def virtual_active(raw_args):
     description = str(args.get("description") or "").strip()
     if not description:
         return json.dumps({"ok": False, "reason": "缺少 description"}, ensure_ascii=False)
-    declared = str(args.get("slot") or "short").strip().lower()
-    slot = declared if declared in ("short", "long", "event") else "short"
+    declared = str(args.get("slot") or "").strip().lower()
+    slot = declared if declared in ("short", "long", "event") else "auto"
     force = bool(args.get("force"))
 
     receipt = body.commit(description, slot, force=force, appeal=args.get("appeal"),
-                          sleep=args.get("sleep"), line=args.get("line"))
+                          sleep=args.get("sleep"), line=args.get("line"),
+                          location=args.get("location"),
+                          emotion_break=bool(args.get("emotion_break")))
     if not receipt.get("ok") and receipt.get("degraded"):
         core.ERROR.append(f"[WARN] body 判定失败：{receipt.get('reason')}")
     return json.dumps(receipt, ensure_ascii=False)
