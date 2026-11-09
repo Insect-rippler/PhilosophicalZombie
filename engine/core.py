@@ -556,25 +556,82 @@ def appearance_message():
     ]}
 
 
-def sanitize_tool_pairs(messages):
-    """丢掉悬空的 tool_calls：assistant 发了工具却没回执的，把工具调用摘掉。
+INTERRUPTED = "[ERROR] 这次工具执行被服务重启或超时中断，未完成；不要当作成功。"
 
-    写坏的会话（工具崩了没写回执）会让每次请求都 400，必须在发送前清掉。
+
+def repair_messages(messages):
+    """修复会话结构：给缺失回执的工具调用补一条中断回执，丢掉孤立回执。
+
+    写坏的会话会让每次请求 400（tool_calls 后面没有 tool 消息），
+    所以发送前和启动时都要过一遍。
     """
-    out = []
-    for index, msg in enumerate(messages):
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            ids = {c.get("id") for c in msg["tool_calls"] if isinstance(c, dict)}
-            found, cursor = set(), index + 1
-            while cursor < len(messages) and messages[cursor].get("role") == "tool":
-                found.add(messages[cursor].get("tool_call_id"))
-                cursor += 1
-            if not ids <= found:
-                msg = {k: v for k, v in msg.items() if k != "tool_calls"}
-                if not str(msg.get("content") or "").strip():
-                    continue
-        out.append(msg)
+    fixed, changed = [], False
+    index = 0
+    while index < len(messages):
+        msg = messages[index]
+        fixed.append(msg)
+        index += 1
+        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+            continue
+
+        wanted = [c for c in msg["tool_calls"] if isinstance(c, dict)]
+        ids = {c.get("id") for c in wanted}
+        seen = set()
+        while index < len(messages) and messages[index].get("role") == "tool":
+            row = messages[index]
+            cid = row.get("tool_call_id")
+            if cid in ids and cid not in seen:
+                seen.add(cid)
+                fixed.append(row)
+            else:
+                changed = True          # 孤立或重复的回执，丢掉
+            index += 1
+        for call in wanted:
+            cid = call.get("id")
+            if cid not in seen:
+                fixed.append({"role": "tool", "tool_call_id": cid,
+                              "content": INTERRUPTED,
+                              "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+                changed = True
+
+    # 末尾还有孤立的 tool 消息：没有对应的调用，清掉
+    known = {c.get("id") for m in fixed if m.get("role") == "assistant"
+             for c in (m.get("tool_calls") or []) if isinstance(c, dict)}
+    cleaned = [m for m in fixed
+               if m.get("role") != "tool" or m.get("tool_call_id") in known]
+    if len(cleaned) != len(fixed):
+        changed = True
+    return cleaned, changed
+
+
+def sanitize_tool_pairs(messages):
+    """发送前清洗：只摘掉没有回执的 tool_calls，不改文件。"""
+    out, _ = repair_messages(messages)
     return out
+
+
+def repair_session(path=None):
+    """启动时修一次会话文件；改动了就写回。"""
+    target = Path(path or SESSION_PATH)
+    if not target.exists():
+        return 0
+    rows = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    fixed, changed = repair_messages(rows)
+    if not changed:
+        return 0
+    tmp = target.with_name(target.name + ".repair.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for row in fixed:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp.replace(target)
+    return len(fixed) - len(rows)
 
 
 def build_system(skills_data):

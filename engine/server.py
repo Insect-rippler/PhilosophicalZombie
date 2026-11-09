@@ -918,6 +918,12 @@ def idle_loop():
 
 def main():
     import threading
+    try:
+        fixed = core.repair_session()
+        if fixed:
+            print(f"[boot] 修复会话：{fixed} 行", flush=True)
+    except Exception as exc:                  # noqa: BLE001
+        print("[boot] 会话修复失败:", exc, flush=True)
     ensure_activity_mark()
     threading.Thread(target=idle_loop, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
