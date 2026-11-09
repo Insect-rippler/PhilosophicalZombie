@@ -951,7 +951,7 @@ def render_state(ch=None, pending="", now=None, full=False):
         when = ""
         if alarm:
             when = "，闹钟定在 " + time.strftime("%H:%M", time.localtime(float(alarm[0]["at"])))
-        lines.append(f"角色正在睡眠{when}。不要替她递交睡下的动作；醒来会由生理或闹钟触发。")
+        lines.append(f"角色正在睡眠{when}。她已经躺下了，不必再递交睡下的动作；醒来自会由生理或闹钟触发。")
 
     moment = time.time() if now is None else float(now)
     last_action = ch.get("state", {}).get("lastActionAt")
