@@ -540,45 +540,21 @@ def append_session(messages, path=SESSION_PATH):
     return len(messages)
 
 
-APPEARANCE_MAX_BYTES = 600 * 1024      # 超过这个体积就先压一遍再注入
-
-
-def _shrink_image(raw):
-    """大图压成 1024 长边的 JPEG，避免每轮请求背着几 MB 的 base64。"""
-    try:
-        import io
-        from PIL import Image
-        image = Image.open(io.BytesIO(raw)).convert("RGB")
-        image.thumbnail((1024, 1024), Image.LANCZOS)
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG", quality=85)
-        return buf.getvalue(), "image/jpeg"
-    except Exception:                              # noqa: BLE001
-        return raw, None
-
-
 def appearance_message():
-    """她此刻的样子：单独一条，放在 system 之后、session 之前。"""
+    """她此刻的样子：单独一条，放在 system 之后、session 之前。
+
+    这里只给本地路径——发送前由 file_api.clean_messages 上传一次换成 file_id，
+    同一张图后续请求直接复用，不用每轮背 base64。
+    """
     picture = _paths.data("media", "self", "appearance", "appearance.png")
     if not picture.exists():
         # 模拟器没有自己的外观图时，只读借用真实那份，不复制
         picture = _paths.ROOT / "state" / "media" / "self" / "appearance" / "appearance.png"
     if not picture.exists():
         return None
-    try:
-        import base64
-        raw = picture.read_bytes()
-    except OSError:
-        return None
-    mime = "image/png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
-    if len(raw) > APPEARANCE_MAX_BYTES:
-        raw, forced = _shrink_image(raw)
-        if forced:
-            mime = forced
-    url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
     return {"role": "user", "content": [
         {"type": "text", "text": "<appearance>她此刻的样子（参考，不必逐条描述）</appearance>"},
-        {"type": "image_url", "image_url": {"url": url}},
+        {"type": "image_url", "image_url": {"url": str(picture)}},
     ]}
 
 
