@@ -4,15 +4,11 @@ state/Philosophical.json
 *.pem
 .env
 
-# ============ 角色内容：只保留占位说明 ============
-# CHARACTER/PERSONA/MEMORY/LOREBOOK/USER 属于角色数据，不入库
-ConsciousnessRealm/*.md
-!ConsciousnessRealm/README.md
-ConsciousnessRealm/characters/
+# ============ 角色内容：提示词与角色卡入库，运行产物不入库 ============
 ConsciousnessRealm/plan/
 # 记忆数据与向量（产物 / 派生）
 ConsciousnessRealm/embedding/
-# 世界书条目内容（格式见 ConsciousnessRealm/README.md）
+# 世界书检索产物（原料见 ConsciousnessRealm/LOREBOOK.md）
 ConsciousnessRealm/lorebook/lorebook.json
 
 # ============ 模型权重：约 1.43 GB，走下载 ============

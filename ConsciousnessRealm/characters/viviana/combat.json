@@ -1,0 +1,68 @@
+{
+  "name": "薇薇安娜",
+  "_doc": "她的战斗包。数值按 PRTS 干员数据除以 10：生命 2920→292，攻击 646→65，防御 447→45，法抗 15。换角色只换这份。",
+  "attributes": {
+    "hp": 292,
+    "atk": 65,
+    "def": 45,
+    "res": 15,
+    "speed": 58
+  },
+  "skills": [
+    {
+      "id": "candle",
+      "name": "烛影",
+      "type": "attack",
+      "power": 1.1,
+      "cost": 0,
+      "cooldown": 0,
+      "effect": {
+        "debuff": {
+          "def": -6,
+          "turns": 2
+        }
+      }
+    },
+    {
+      "id": "thrust",
+      "name": "贯刺",
+      "type": "attack",
+      "power": 1.5,
+      "cost": 3,
+      "cooldown": 2
+    },
+    {
+      "id": "still",
+      "name": "止步",
+      "type": "defend",
+      "power": 0,
+      "cost": 2,
+      "cooldown": 2,
+      "effect": {
+        "shield": 45
+      }
+    },
+    {
+      "id": "dusk",
+      "name": "暮色",
+      "type": "attack",
+      "power": 1.9,
+      "cost": 5,
+      "cooldown": 3
+    }
+  ],
+  "items": [
+    {
+      "id": "bandage",
+      "name": "绷带",
+      "heal": 35,
+      "count": 2
+    },
+    {
+      "id": "potion",
+      "name": "伤药",
+      "heal": 70,
+      "count": 1
+    }
+  ]
+}
