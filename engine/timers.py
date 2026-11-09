@@ -41,12 +41,26 @@ CHARACTER = STATE_DIR / "character.json"
 PENDING = STATE_DIR / "pending.json"
 
 # 生理指标与取值范围
-METABOLISM_RANGE = {
-    "hp": (0.0, 100.0), "health": (0.0, 100.0),
-    "bodyTemperature": (34.0, 40.0), "satiety": (0.0, 100.0),
-    "hydration": (0.0, 100.0), "fatigue": (0.0, 200.0),
-    "sleepiness": (0.0, 100.0), "sexualDesire": (0.0, 100.0),
+METABOLISM_RANGE_DEFAULT = {
+    "satiety": (0.0, 100.0),
+    "hydration": (0.0, 100.0),
+    "fatigue": (0.0, 200.0),
+    "sleepiness": (0.0, 100.0),
+    "hp": (0.0, 100.0),
+    "health": (0.0, 100.0),
+    "bodyTemperature": (34.0, 42.0),
 }
+
+
+def metabolism_range():
+    """生理取值范围：优先读配置，缺的用默认。"""
+    out = dict(METABOLISM_RANGE_DEFAULT)
+    for key, pair in (harness_metabolism().get("ranges") or {}).items():
+        if key == "emotion":
+            continue                     # 情绪走单独的锁与范围
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            out[key] = (float(pair[0]), float(pair[1]))
+    return out
 EMOTION_RANGE = {"emotion": (0.0, 240.0)}
 EMOTION_CENTER = 120.0
 EMOTION_LOCK_LOW = 30.0        # 再往下就进「低落」，先锁住
@@ -280,9 +294,9 @@ def _apply_reward(ch, delta):
     for key, value in (delta or {}).items():
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
-        if key in METABOLISM_RANGE:
+        if key in metabolism_range():
             metab[key] = round(_clamp(float(metab.get(key, 0)) + float(value),
-                                      METABOLISM_RANGE[key]), 3)
+                                      metabolism_range()[key]), 3)
             applied[key] = float(value)
         elif key in EMOTION_RANGE:
             cur = float(emo.get(key, EMOTION_CENTER))
@@ -544,10 +558,10 @@ def advance(now=None):
 
     applied = {}
     for key, rate in rates.items():
-        if key not in METABOLISM_RANGE:
+        if key not in metabolism_range():
             continue
         before = float(metab.get(key, 0))
-        after = _clamp(before + rate * hours, METABOLISM_RANGE[key])
+        after = _clamp(before + rate * hours, metabolism_range()[key])
         if round(after, 1) != round(before, 1):
             applied[key] = round(after - before, 1)
         metab[key] = round(after, 3)

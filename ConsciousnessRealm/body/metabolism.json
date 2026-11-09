@@ -177,6 +177,26 @@
     "fatigueToSleepiness": 0.8
   },
   "ranges": {
+    "satiety": [
+      0,
+      100
+    ],
+    "hydration": [
+      0,
+      100
+    ],
+    "fatigue": [
+      0,
+      200
+    ],
+    "sleepiness": [
+      0,
+      100
+    ],
+    "health": [
+      0,
+      100
+    ],
     "emotion": [
       0,
       240
