@@ -106,8 +106,11 @@ def run_with_tools(payload, emit):
     pending_text = ""
 
     def emit_pending():
-        if pending_text.strip():
-            emit("delta", pending_text)
+        if not pending_text.strip():
+            return
+        # 出口再兜一层：参数写成文字的，绝不进正文
+        clean, _ = salvage_text_call(pending_text)
+        emit("delta", clean)
     echo = EchoStrip()
     registry = tools.load_registry()        # 一轮只读一次
 
@@ -226,12 +229,32 @@ def run_with_tools(payload, emit):
 
         last_text = "".join(content_parts)
         echo.remember(last_text)
+
+        # 模型把 active 的参数写成了正文：把它当一次调用捡回来
+        if not calls:
+            cleaned_text, salvaged = salvage_text_call(pending_text)
+            if salvaged:
+                pending_text = cleaned_text
+                buffered = [cleaned_text]
+                args = {k: v for k, v in salvaged.items()}
+                if args.get("force") in ("true", "True", "1"):
+                    args["force"] = True
+                if args.get("sleep") in ("true", "True", "1"):
+                    args["sleep"] = True
+                if not args.get("slot"):
+                    args["slot"] = "short"
+                calls = [{"id": "salvaged-1", "type": "function",
+                          "function": {"name": "active",
+                                       "arguments": json.dumps(args, ensure_ascii=False)}}]
+                log("tool.salvaged", keys=list(args))
+
         if not calls:
             emit_pending()
             if not pending_text.strip() and spoken_line:
                 return True, ""
             run_with_tools.reasoning = "".join(reasoning_parts)
-            return True, pending_text
+            clean_text, _ = salvage_text_call(pending_text)
+            return True, clean_text
 
 
         assistant = {"role": "assistant",
@@ -433,6 +456,28 @@ ATTR_DESC = _re.compile(r'description\s*=\s*["\']([^"\']*)["\']', _re.S)
 DSML_CALL = _re.compile(r'invoke\s+name\s*=\s*["\'](active|scene)["\']', _re.S)
 DSML_PARAM = _re.compile(r'parameter\s+name\s*=\s*["\']description["\'][^>]*>([^<]*)', _re.S)
 NOISE = _re.compile(r"<[^>]*DSML[^>]*>|</\s*(active|scene)\s*>|<\s*\|\|?[^>]*>", _re.S)
+
+
+# 模型有时不调用工具，而是把参数写成正文：
+#   description="她推开门" slot="short" line="进来吧。"
+# 这里把它们捡回来，当成一次真正的 active 调用。
+TEXT_CALL = _re.compile(r'(description|slot|line|scene|force|sleep)\s*=\s*["\']([^"\']*)["\']', _re.S)
+
+
+def salvage_text_call(text):
+    """从正文里捡出被写成文字的 active 参数。
+
+    返回 (清理后的正文, 参数字典或 None)。至少要有 description 才认。
+    """
+    if not text:
+        return text, None
+    found = {k: v for k, v in TEXT_CALL.findall(text)}
+    if not found.get("description"):
+        return text, None
+    cleaned = TEXT_CALL.sub("", text)
+    cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines())
+    cleaned = "\n".join(l for l in cleaned.splitlines() if l.strip())
+    return cleaned.strip(), found
 
 
 class Salvager:
