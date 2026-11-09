@@ -444,6 +444,23 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 
 「她明明醒着却不动」时，先看有没有 `stream.fail`：有就是请求层，没有才是她没决定做什么。
 
+## 重置
+
+「重置」指回到初始状态，范围固定：
+
+| 项 | 重置成什么 |
+|---|---|
+| 会话 `state/session/session.jsonl` | 清空，历史归档一并清掉 |
+| 角色 `state/realTime/character.json` | 她的房间、醒着、生理按当下时刻给、情绪回中位、关系清空 |
+| 计时器 / 待处理 / 提醒 | 全清 |
+| 维护标记 | `due: false` |
+| 印象记录 | 删除 |
+| 计划 `plan/agenda.json` | 清空 |
+
+**不动**：`MEMORY.md`、`PERSONA.md`、`CHARACTER.md`、`body/`、`world/`、向量库——这些属于初始设定。
+
+重置前会先存一份快照到 `state/backup/`。
+
 ## 约定
 
 - **文件里只写内容**，规则写在本 README。

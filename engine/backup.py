@@ -20,8 +20,10 @@ ROOT = _paths.ROOT
 
 
 def _target_dir(now=None):
-    stamp = time.strftime("%Y-%m-%d", time.localtime(now))
-    return _paths.data("backup", stamp)
+    """按天建目录、按时间建子目录——一天里可以存多份，互不覆盖。"""
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    clock = time.strftime("%H%M%S", time.localtime(now)) + f"-{int(time.time() * 1000) % 1000:03d}"
+    return _paths.data("backup", day, clock)
 
 
 def snapshot(tag="auto", now=None):
@@ -35,7 +37,7 @@ def snapshot(tag="auto", now=None):
             continue
         name = src.name
         target = dest / name
-        if target.exists():                     # 当天已有同名，保留最早的那份
+        if target.exists():
             continue
         try:
             shutil.copy2(src, target)
