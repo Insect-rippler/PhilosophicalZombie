@@ -642,16 +642,6 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         return {"line": str(line or "").strip() or None,
                 "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
                 "ok": True}
-    # 三十秒以内的事：立刻做完，不进槽也不建计时器
-    if float(verdict["duration"]) * 60 <= timers.INSTANT_SECONDS:
-        if force:
-            timers.cancel(verdict["slotId"])
-        timers.apply_now(reward=verdict.get("reward"),
-                         location=(location or verdict["location"]))
-        return {"line": str(line or "").strip() or None,
-                "已执行": f"动作已完成：{description}。",
-                "ok": True}
-
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
         cancelled = timers.cancel(verdict["slotId"])
