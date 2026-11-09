@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "active",
-      "description": "声明角色正在做的一件事。description 说清做什么、对什么、在哪儿；body 判定可执行性与时长。要睡下时加 sleep=true（设闹钟），需要时用 scene 附带一句环境变化。",
+      "description": "声明角色正在做的一件事。description 说清做什么、对什么、在哪儿；body 判定可执行性与时长。要睡下时加 sleep=true（醒来由生理决定，要定时叫醒请另设 alarm）；需要时用 scene 附带一句环境变化。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -633,13 +633,13 @@
     "type": "function",
     "function": {
       "name": "alarm",
-      "description": "设一个闹钟：到点叫醒自己。",
+      "description": "设一个独立闹钟：到点提醒她，睡着就叫醒，醒着就提一句。和睡不睡无关，打铁、赶路、等人的时候都能设；只保留一个，新的覆盖旧的。",
       "parameters": {
         "type": "object",
         "properties": {
           "seconds": {
             "type": "number",
-            "description": "多少秒之后叫醒，例如 1800 = 半小时后。"
+            "description": "多少秒之后响，例如 1800 = 半小时后。"
           },
           "note": {
             "type": "string",
