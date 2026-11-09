@@ -653,7 +653,8 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         timers._write(timers.CHARACTER, ch)
         return {"line": str(line or "").strip() or None,
                 "未执行": (f"要睡下吗？按现在的困意，大约 {wake_at} 就会自己醒，"
-                          f"如果夜里反复入睡或者睡眠不足都会使第二天更容易疲劳。"),
+                          f"如果夜里反复入睡或者睡眠不足都会使第二天更容易疲劳。"
+                          f"确认要睡觉就再递交一次sleep。"),
                 "ok": False, "allow": False}
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉

@@ -29,6 +29,15 @@ def load_registry():
     except (OSError, json.JSONDecodeError) as e:
         core.ERROR.append(f"[core.ERROR] 工具注册表读取失败：{e}")
         return []
+    # 本机专用工具：不入库，放同目录的 function.local.json
+    local = Path(core.REGISTRY).with_name("function.local.json")
+    if local.exists():
+        try:
+            extra = json.loads(local.read_text(encoding="utf-8"))
+            if isinstance(extra, list):
+                items = list(items) + extra
+        except (OSError, json.JSONDecodeError) as e:
+            core.ERROR.append(f"[WARN] function.local.json 读取失败：{e}")
     registry = [i for i in items if isinstance(i, dict) and i.get("function")]
     TOOL_PATHS.clear()
     for item in registry:
