@@ -112,6 +112,9 @@ class TurnWorker(QThread):
             with requests.post(f"{BASE}/turn", json={"text": self.text},
                                stream=True, timeout=(10, 600),
                                proxies={"http": None, "https": None}) as resp:
+                if resp.status_code != 200:
+                    self.failed.emit(f"服务返回 {resp.status_code}：{resp.text[:120]}")
+                    return
                 for line in resp.iter_lines(decode_unicode=True):
                     if not line:
                         continue
@@ -132,13 +135,14 @@ class TurnWorker(QThread):
                             parts.append(value)
                             self.delta.emit(value)
                         elif kind == "done":
+                            self._finished = True
                             self.done.emit(value)
                         elif kind == "error":
                             self.failed.emit(str(value))
         except Exception as e:               # noqa: BLE001
             self.failed.emit(f"{type(e).__name__}: {e}")
         finally:
-            if parts:
+            if parts and not getattr(self, "_finished", False):
                 self.done.emit("".join(parts))
 
 

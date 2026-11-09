@@ -306,7 +306,7 @@ def run_with_tools(payload, emit):
 
 # ---------------- 状态 / 配置 / 文件 ----------------
 
-def session_history(limit=40):
+def session_history(limit=40, with_total=False):
     """回读 session，给前端重建对话。工具调用折成旁白或提示行。"""
     if not core.SESSION_PATH.exists():
         return []
@@ -367,6 +367,8 @@ def session_history(limit=40):
             continue
         rows.append({"role": role, "name": item.get("name") or "",
                      "text": text, "ts": item.get("ts") or ""})
+    if with_total:
+        return rows[-limit:], len(rows)
     return rows[-limit:]
 
 
@@ -771,9 +773,8 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((query.get("limit") or ["40"])[0])
             except ValueError:
                 limit = 40
-            rows = session_history(limit)
-            return self._json({"messages": rows,
-                               "total": len(session_history(100000))})
+            rows, total = session_history(limit, with_total=True)
+            return self._json({"messages": rows, "total": total})
         if path == "/skill":
             return self._json(skill_text())
         if path == "/usage":

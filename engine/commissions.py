@@ -60,7 +60,7 @@ def accept(template_id, rng=None):
     if not choices:
         return None
     enemy = rng.choice(choices)
-    item = {"id": f"c-{int(time.time())}", "template": tpl["id"],
+    item = {"id": f"c-{time.time_ns() // 1000}", "template": tpl["id"],
             "title": tpl.get("title", ""), "place": tpl.get("place", ""),
             "difficulty": tpl["difficulty"], "enemy": enemy["id"],
             "enemyName": enemy.get("name", ""),

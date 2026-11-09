@@ -869,9 +869,6 @@ def tick_lock():
         _write(CHARACTER, ch)
 
 
-PLACES_PATH = _paths.data("world", "places.json") if False else None
-
-
 def places():
     """地点表：地点名 -> 属性。"""
     path = _paths.ROOT / "ConsciousnessRealm" / "world" / "places.json"

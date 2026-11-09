@@ -42,6 +42,7 @@ SKILL_PATH = REALM_ROOT / "skill" / "skill.json"
 SYSTEM_BLOCKS = ["PERSONA", "AGENT", "CHARACTER", "MEMORY", "LOREBOOK", "USER"]
 
 # 可调参数全部读 harness（state/Philosophical.json），下面的常量在配置加载后定义。
+# state / plan 两段均已实现：state 来自 timers.render_state，plan 来自 agenda.json。
 
 # 检索层按路径导入；失败时降级，不影响其它段落
 sys.path.insert(0, str(ROOT))
@@ -691,8 +692,8 @@ def load_skills():
 
 
 def build_blocks(search_text, skills_data, record=True):
-    import recall
     """检索类背景块。一轮对话里只算一次——工具循环的后续轮次复用同一份。"""
+    import recall
     blocks = []
     for name, block in (
         ("memory", recall.memory_recall(search_text, record=record)),

@@ -198,13 +198,13 @@ def virtual_active(raw_args):
 
 
 def execute_tool_call(call, registry):
-    import time as _t
-    _started = _t.time()
     """执行一次 tool_call，返回回灌给模型的文本。
 
     工具约定：stdin 收 JSON 参数，stdout 打 JSON 结果，非 0 退出视为失败。
     失败信息也要回灌——让模型知道发生了什么，而不是静默重试。
     """
+    import time as _t
+    _started = _t.time()
     fn = call.get("function") or {}
     name = fn.get("name") or ""
     raw_args = fn.get("arguments") or "{}"

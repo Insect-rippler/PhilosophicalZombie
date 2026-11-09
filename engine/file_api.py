@@ -68,6 +68,13 @@ class FileAPI:
         if not rec:
             return None
         expires_at = rec.get("expires_at")
+        if isinstance(expires_at, str) and expires_at.strip():
+            try:                              # 可能是 ISO 串
+                import datetime as _dt
+                expires_at = _dt.datetime.fromisoformat(
+                    expires_at.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                expires_at = None
         if expires_at and time.time() > float(expires_at) - REUSE_MARGIN:
             return None
         return rec.get("id")
