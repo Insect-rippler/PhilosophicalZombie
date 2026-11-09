@@ -469,9 +469,13 @@ class Salvager:
             events.extend(self._inspect(chunk, text_holder := []))
             # _inspect 只处理标签本身；description 可能在后面的正文里
 
-        # 兜底：DSML 形式的调用
+        # 兜底：DSML 形式的调用。
+        # 命中的片段要立刻从 hold 里切掉，否则下一次 feed 会把同一段再发一遍。
         for match in list(DSML_CALL.finditer(self.hold)):
             events.append({"kind": "narration", "name": match.group(1), "text": ""})
+        if events:
+            last = max((m.end() for m in DSML_CALL.finditer(self.hold)), default=0)
+            self.hold = self.hold[last:]
         return text, events
 
     def _inspect(self, chunk, _unused):

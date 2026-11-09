@@ -249,6 +249,17 @@ brain 想做事 → 调 active(description, slot)
 
 和主代理共用同一个 key 和模型——判定是结构化输出，对文笔没要求；`temperature 0.2`、关思考、`response_format: json_object`。
 
+### body 的提示词分三层
+
+| 位置 | 作用 | 改它 |
+|---|---|---|
+| `body/rule.md` | 它是谁、四件活、哪些不归它判 | 改身份与职责边界 |
+| `body/judge.json` | 七节判定标准（内容规范） | 改判定口径 |
+| `body.py` 的内联 schema | 输出字段长什么样（格式） | 加字段时才动 |
+
+另有一次独立判定：`OBSERVE_RULES`（也在 `body.py`）——看**对方这一轮做了什么**，
+落在她的 hp / health / emotion 上。它和动作判定是两个请求，别把两张表混着改。
+
 ### 时长与占身
 
 判据不是「时长档位」，而是**占不占身**：
