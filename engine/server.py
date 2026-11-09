@@ -53,7 +53,7 @@ TOOL_NARRATION = {
 
 def describe_tool(name, args, result):
     """工具调用 → (类型, 文本)。active 是旁白，其余是系统提示。"""
-    if name in ("active", "scene"):
+    if name == "active":
         try:
             desc = json.loads(args).get("description") if isinstance(args, str) else ""
         except json.JSONDecodeError:
@@ -109,6 +109,8 @@ def run_with_tools(payload, emit):
         if pending_text.strip():
             emit("delta", pending_text)
     echo = EchoStrip()
+    registry = tools.load_registry()        # 一轮只读一次
+
     rounds = max(1, int(core.LOOP_MAX))       # 上限统一读 harness.loop.maxRounds
     for _round in range(rounds):
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
@@ -243,7 +245,7 @@ def run_with_tools(payload, emit):
             name, args = name, (call.get("function") or {}).get("arguments") or "{}"
             runlog.log("tool.begin", name=name,
                        chars=len(str((call.get("function") or {}).get("arguments") or "")))
-            output = tools.execute_tool_call(call, tools.load_registry())
+            output = tools.execute_tool_call(call, registry)
             runlog.log("tool.done", name=name, out=len(str(output)))
             scene = said = None
             if name == "active":
@@ -339,7 +341,7 @@ def session_history(limit=40, with_total=False):
         if role == "assistant" and item.get("tool_calls"):
             for call in item["tool_calls"]:
                 name = (call.get("function") or {}).get("name") or ""
-                if name in ("active", "scene"):
+                if name == "active":
                     try:
                         args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                     except json.JSONDecodeError:
