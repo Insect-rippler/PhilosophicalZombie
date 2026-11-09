@@ -59,9 +59,13 @@ def _write_mark(data):
 
 
 def _user_messages_since(ts):
+    """只取 ts 之后他真正说过的话；ts 为 0 时取全部。"""
     path = Path(SESSION)
     if not path.exists():
         return []
+    since = ""
+    if ts:
+        since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts)))
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -71,6 +75,8 @@ def _user_messages_since(ts):
         except json.JSONDecodeError:
             continue
         if row.get("role") != "user":
+            continue
+        if since and str(row.get("ts") or "") and str(row.get("ts")) < since:
             continue
         out.append(str(row.get("content") or "")[:200])
     return out

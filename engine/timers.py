@@ -20,6 +20,7 @@
      "state": {"active": "sleep"}, "silent": false, "source": "body"}
 """
 
+import fsio
 import json
 import paths as _paths
 import os
@@ -81,18 +82,7 @@ def _read(path, default):
 
 
 def _write(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(6):                 # Windows 上偶发被占用，重试几次
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.05 * (attempt + 1))
+    fsio.write_json(path, data)
 
 
 def load_timers():

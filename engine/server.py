@@ -658,6 +658,11 @@ def idle_tick():
         pass
     timers.tick_lock()
     try:
+        try:
+            import events as _events
+            _events.mark_user()
+        except Exception:            # noqa: BLE001
+            pass
         body.observe()            # 先把对方这一轮做的事结算掉
     except Exception as exc:      # noqa: BLE001
         log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])

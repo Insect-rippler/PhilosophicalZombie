@@ -7,6 +7,7 @@
 权重：{"base": 8, "if": [{"when": {"sinceUserHours": 4}, "value": 50}]}
 """
 
+import fsio
 import json
 import paths as _paths
 import os
@@ -29,17 +30,7 @@ def _read(path, default):
 
 
 def _write(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(3):
-        try:
-            tmp.replace(path)
-            return
-        except PermissionError:
-            time.sleep(0.05)
-    tmp.replace(path)
+    fsio.write_json(path, data)
 
 
 def active_world():
@@ -61,6 +52,14 @@ def note_message(now=None):
     _write(STATE, seen)
 
 
+
+
+def mark_user(now=None):
+    """真人开口时调用：记下最近一次对话时间，供事件条件用。"""
+    now = time.time() if now is None else float(now)
+    seen = _read(STATE, {}) or {}
+    seen["lastUserAt"] = now
+    _write(STATE, seen)
 
 
 def in_hours(hour, span):
