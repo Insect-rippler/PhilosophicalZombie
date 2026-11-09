@@ -18,7 +18,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, 
                            QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QPlainTextEdit,
+                               QListWidgetItem, QMainWindow, QMenu, QPlainTextEdit,
                                QPushButton, QScrollArea, QSizePolicy, QSplitter,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
