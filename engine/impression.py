@@ -3,7 +3,8 @@
 触发：距上次更新超过 6 小时，且期间用户消息不少于阈值（默认 50）。
 睡醒维护之后也会检查一次。
 
-更新方式：模型输出一组操作，代码执行；对不上原文的替换只记警告，不硬改。
+上下文：和主代理同一套（persona / memory / state / 会话），
+        但这一轮不演出——只输出印象修改操作。
 """
 
 import json
@@ -28,27 +29,20 @@ MIN_USER_MSGS = int(__import__("os").environ.get("PZ_IMPRESSION_MIN", "50"))
 
 _LOCK = threading.Lock()
 
-PROMPT = """你在整理一个角色对某个人的印象。
+WAKE = """[INFO] 这不是演出，也不用回应任何人。
 
-下面是当前的印象文件，和最近这段时间那个人说过的话。
-
-请输出一组修改操作，只改真正变了的地方；没变就返回空列表。
-
-格式：
-{"ops": [
-  {"mode": "append", "section": "我知道的", "content": "一条新事实"},
-  {"mode": "replace", "section": "我的分寸", "target": "要替换掉的原句", "content": "新的说法"},
-  {"mode": "rewrite", "section": "一句", "content": "整节新内容"}
-]}
+把这段时间里你对那个人的印象整理一下，写成对 USER 的修改操作。
 
 规则：
 - section 只能是：怎么认识的 / 我知道的 / 我不知道的 / 我的分寸 / 一句
 - append：加一条，不要重复已有的意思
-- replace：target 必须是原文里完整的一行或一句，能原样找到
-- rewrite：整节替换，旧内容不再保留
-- 只写她看见、听见的，不写猜测出来的隐私
-- 最多 3 条操作；没有值得改的就返回 {"ops": []}
-- 只输出这个 JSON，不要任何解释文字
+- replace：target 必须是原文里完整的一行，能原样找到
+- rewrite：整节替换
+- 只写你看见、听见的，不写你猜出来的动机或隐私
+- 最多 3 条；没有值得改的就返回 {"ops": []}
+
+只输出 JSON：
+{"ops": [{"mode": "append", "section": "我知道的", "content": "…"}]}
 """
 
 
@@ -117,7 +111,7 @@ def apply_ops(text, ops):
             warns.append(f"找不到小节：{name}")
             continue
         start, end = rng
-        body = [l for l in lines[start + 1:end]]
+        body = lines[start + 1:end]
         if mode == "append":
             while body and not body[-1].strip():
                 body.pop()
@@ -128,7 +122,7 @@ def apply_ops(text, ops):
             if hit is None:
                 warns.append(f"替换目标未找到：{target[:20]}")
                 continue
-            body[hit] = l if False else body[hit].replace(target, content)
+            body[hit] = body[hit].replace(target, content)
         elif mode == "rewrite":
             body = ["", content]
         else:
@@ -139,15 +133,36 @@ def apply_ops(text, ops):
     return "\n".join(lines).rstrip() + "\n", applied, warns
 
 
+def _ask():
+    """用主代理同一套上下文要一份操作列表。"""
+    import core
+    import modelio
+    from dream import parse_json_answer
+
+    assembled = core.context_assemble()
+    messages = list(assembled.get("messages") or [])
+    messages.append({"role": "user", "content": WAKE})
+
+    body = {
+        "model": core.payload.get("model"),
+        "messages": messages,
+        "max_tokens": 800,
+        "temperature": 0.3,
+        "thinking": {"type": "disabled"},
+        "response_format": {"type": "json_object"},
+    }
+    response = modelio.send(body)
+    if not response:
+        return None
+    content = ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    return parse_json_answer(content)
+
+
 def run(dry_run=False):
     if not USER_PATH.exists():
         return {"ok": False, "reason": "USER.md 不存在"}
-    import dream
-
     current = USER_PATH.read_text(encoding="utf-8")
-    recent = _user_messages_since(_read_mark().get("lastAt"))
-    body = "## 当前印象\n" + current + "\n\n## 最近他说过的话\n" + "\n".join(recent[-80:])
-    answer = dream.call_model(PROMPT, body[:6000], max_tokens=1200)
+    answer = _ask()
     if not isinstance(answer, dict):
         return {"ok": False, "reason": "模型未返回结果"}
     ops = answer.get("ops") or []
@@ -155,7 +170,7 @@ def run(dry_run=False):
     if not dry_run and applied:
         USER_PATH.write_text(new_text, encoding="utf-8")
     if not dry_run:
-        _write_mark({"lastAt": time.time(), "userMsgs": len(recent)})
+        _write_mark({"lastAt": time.time(), "userMsgs": 0})
     return {"ok": True, "applied": applied, "warns": warns, "ops": len(ops), "dry_run": dry_run}
 
 
