@@ -591,6 +591,11 @@ def kick_maintenance():
 def idle_tick():
     """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
     kick_maintenance()
+    try:
+        import impression
+        impression.maybe_update()
+    except Exception:      # noqa: BLE001
+        pass
     timers.tick_lock()
     try:
         body.observe()            # 先把对方这一轮做的事结算掉
