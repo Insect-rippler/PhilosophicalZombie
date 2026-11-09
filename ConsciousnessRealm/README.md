@@ -36,7 +36,7 @@
 | `<impression>` | 她对那个人的印象（`USER.md`） |
 | `<appearance>` | 她此刻的样子（图片，静态） |
 
-`<appearance>` 由 `state/realTime/appearance.png` 提供：一张图，每轮随系统消息注入。
+`<appearance>` 由 `state/media/self/appearance/appearance.png` 提供：一张图，每轮随系统消息注入。
 换图就是覆盖这个文件；不需要自动换装的话，手动换就行。
 
 ## 标题约定

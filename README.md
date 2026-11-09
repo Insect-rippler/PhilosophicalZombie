@@ -32,7 +32,7 @@
 | `lorebook_momentary` | `lorebook/lorebook.json` 匹配 | 具体设定，按标签命中注入 |
 | `skill_knowledge` | `skill/skill.json`（按 `keywords` 命中） | 非驻留能力，按需注入 |
 | `state` | `state/realTime/` | 常驻：时间、位置、环境、生理、刚发生的事 |
-| `appearance` | `state/realTime/appearance.png` | 她此刻的样子，一张图，紧接 system 之后 |
+| `appearance` | `state/media/self/appearance/appearance.png` | 她此刻的样子，一张图，紧接 system 之后 |
 | `last_message` | 本轮 user 消息 | 唯一需要回应的内容 |
 | `plan` | `plan/agenda.json` | 角色的目标：只含进行中与搁置 |
 
