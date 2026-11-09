@@ -45,6 +45,7 @@ def record_usage(usage, *, turn_id="", round_no=0, speaker=""):
     n = usage_numbers(usage)
     if n["prompt"]:
         LAST_PROMPT_TOKENS = n["prompt"]
+    core.LAST_PROMPT_TOKENS = LAST_PROMPT_TOKENS      # 压缩提示读的是 core 那边
     rec = {
         "ts": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
         "turn": turn_id,
@@ -70,18 +71,18 @@ def dump_payload(assembled, turn_id, round_no):
     debug.dumpTail → 只展开易变的部分（检索块 + 本轮消息），system 与 session 只留摘要
     返回快照路径；两个开关都关时返回 None。
     """
-    if not (DEBUG_DUMP or DEBUG_DUMP_TAIL):
+    if not (core.DEBUG_DUMP or core.DEBUG_DUMP_TAIL):
         return None
     messages = assembled.get("messages") or []
 
-    if DEBUG_DUMP and not DEBUG_DUMP_TAIL:
+    if core.DEBUG_DUMP and not core.DEBUG_DUMP_TAIL:
         data = dict(assembled)
     else:
         last = len(messages) - 1
         rows = []
         for i, m in enumerate(messages):
             content = m.get("content") or ""
-            expand = i == last or (m.get("name") in BLOCK_NAMES)
+            expand = i == last or (m.get("name") in core.BLOCK_NAMES)
             row = {"i": i, "role": m.get("role", "")}
             if m.get("name"):
                 row["name"] = m["name"]
