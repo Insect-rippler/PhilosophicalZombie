@@ -535,6 +535,24 @@ def append_session(messages, path=SESSION_PATH):
     return len(messages)
 
 
+def appearance_message():
+    """她此刻的样子：单独一条，放在 system 之后、session 之前。"""
+    picture = _paths.data("realTime", "appearance.png")
+    if not picture.exists():
+        return None
+    try:
+        import base64
+        raw = picture.read_bytes()
+    except OSError:
+        return None
+    mime = "image/png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+    url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return {"role": "user", "content": [
+        {"type": "text", "text": "<appearance>她此刻的样子（参考，不必逐条描述）</appearance>"},
+        {"type": "image_url", "image_url": {"url": url}},
+    ]}
+
+
 def build_system(skills_data):
     """六个 system 段落 + 常驻技能，拼成一条消息。"""
     parts = []
@@ -630,6 +648,9 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     #       → state → plan → message
     # message 必须最后：它是唯一要回应的内容；plan 是背景，不能抢它的位置
     MESSAGES = [system]
+    shot = appearance_message()
+    if shot:
+        MESSAGES.append(shot)                # 外观图：system 之后、session 之前
     MESSAGES.extend(session)                 # session 历史
 
     MESSAGES.extend(blocks)                  # 检索块原样复用，不重新算
