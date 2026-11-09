@@ -34,9 +34,9 @@
 | `<plan>` | 她自己定的打算 |
 | `<user>` | 真人这一轮说的话 |
 | `<impression>` | 她对那个人的印象（`USER.md`） |
-| `<appearance>` | 她此刻的样子（图片，静态） |
+| `<appearance>` | 她此刻的样子（图片）：当前衣着，没有则用参考底图 |
 
-`<appearance>` 由 `state/media/self/appearance/appearance.png` 提供：一张图，每轮随系统消息注入。
+`<appearance>` 由 `state/media/self/appearance/` 下两张：`appearance.png` 是参考底图（只读，定脸和体形），`current.png` 是当前衣着（换装时由工具覆盖）。注入优先 `current.png`，没有就用底图。
 换图就是覆盖这个文件；不需要自动换装的话，手动换就行。
 
 ## 标题约定

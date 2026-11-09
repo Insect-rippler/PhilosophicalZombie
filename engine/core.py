@@ -546,10 +546,16 @@ def appearance_message():
     这里只给本地路径——发送前由 file_api.clean_messages 上传一次换成 file_id，
     同一张图后续请求直接复用，不用每轮背 base64。
     """
-    picture = _paths.data("media", "self", "appearance", "appearance.png")
+    base_dir = _paths.data("media", "self", "appearance")
+    picture = base_dir / "current.png"          # 当前衣着
     if not picture.exists():
-        # 模拟器没有自己的外观图时，只读借用真实那份，不复制
-        picture = _paths.ROOT / "state" / "media" / "self" / "appearance" / "appearance.png"
+        picture = base_dir / "appearance.png"   # 还没换过装，就用底图
+    if not picture.exists():
+        # 模拟器没有自己的图时，只读借用真实那份，不复制
+        real = _paths.ROOT / "state" / "media" / "self" / "appearance"
+        picture = real / "current.png"
+        if not picture.exists():
+            picture = real / "appearance.png"
     if not picture.exists():
         return None
     return {"role": "user", "content": [
