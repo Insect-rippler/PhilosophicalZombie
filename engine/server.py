@@ -233,7 +233,7 @@ def run_with_tools(payload, emit):
         # 模型把 active 的参数写成了正文：把它当一次调用捡回来
         if not calls:
             cleaned_text, salvaged = salvage_text_call(pending_text)
-            if salvaged:
+            if salvaged and salvaged.get("description"):
                 pending_text = cleaned_text
                 buffered = [cleaned_text]
                 args = {k: v for k, v in salvaged.items()}
@@ -461,7 +461,9 @@ NOISE = _re.compile(r"<[^>]*DSML[^>]*>|</\s*(active|scene)\s*>|<\s*\|\|?[^>]*>",
 # 模型有时不调用工具，而是把参数写成正文：
 #   description="她推开门" slot="short" line="进来吧。"
 # 这里把它们捡回来，当成一次真正的 active 调用。
-TEXT_CALL = _re.compile(r'(description|slot|line|scene|force|sleep)\s*=\s*["\']([^"\']*)["\']', _re.S)
+TEXT_CALL = _re.compile(
+    r'(description|slot|line|scene|force|sleep|location)\s*=\s*'
+    r'(?:"([^"\n]*)"|\'([^\'\n]*)\')', _re.S)
 
 
 def salvage_text_call(text):
@@ -471,8 +473,10 @@ def salvage_text_call(text):
     """
     if not text:
         return text, None
-    found = {k: v for k, v in TEXT_CALL.findall(text)}
-    if not found.get("description"):
+    found = {}
+    for key, dq, sq in TEXT_CALL.findall(text):
+        found[key] = dq or sq
+    if not found:
         return text, None
     cleaned = TEXT_CALL.sub("", text)
     cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines())
