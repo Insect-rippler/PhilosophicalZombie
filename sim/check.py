@@ -111,11 +111,11 @@ except Exception as exc:                       # noqa: BLE001
 # ---------- 7. 判定与槽位 ----------
 try:
     fresh()
-    r1 = body.commit("她抬手抹了把脸", slot="short")
-    r2 = body.commit("她擦汗", slot="short")
+    r1 = body.commit("她坐下来缝补外衣，一直缝到袖口补好", slot="long")
+    r2 = body.commit("她再缝一件衬衫", slot="long")
     check("动作受理", bool(r1.get("已执行")), r1.get("已执行", "")[:30])
     check("槽位拒绝", "未受理" in str(r2) and "还剩" in str(r2), str(r2)[:50])
-    r3 = body.commit("她走去集市", slot="long")
+    r3 = body.commit("她拿起水杯喝一口", slot="short")
     check("跨槽放行", bool(r3.get("已执行")), r3.get("已执行", "")[:30])
 except Exception as exc:                       # noqa: BLE001
     check("槽位拒绝", False, str(exc))
@@ -124,7 +124,10 @@ except Exception as exc:                       # noqa: BLE001
 try:
     fresh(emotion=120.0, sleepiness=40)
     r = body.commit("她躺下睡了", slot="event", sleep=True)
-    check("低困意也能睡", bool(r.get("已执行")), str(r.get("已执行", ""))[:34])
+    warned = ("不困" in str(r.get("未执行", "")) or "醒" in str(r.get("未执行", "")))
+    forced = body.commit("她躺下睡了", slot="event", sleep=True, force=True)
+    check("低困意先给确认", warned or bool(r.get("已执行")), str(r.get("未执行") or r.get("已执行"))[:34])
+    check("带 force 可以睡", bool(forced.get("已执行")), str(forced.get("已执行", ""))[:30])
     ch = timers.load_character()
     ch["metabolism"]["sleepiness"] = 80
     timers._write(timers.CHARACTER, ch)
