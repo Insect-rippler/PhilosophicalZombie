@@ -635,14 +635,14 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             timers._write(timers.CHARACTER, ch)
             timers.set_sleeping(True)
             return {"line": str(line or "").strip() or None,
-                    "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
+                    "已执行": "睡眠请求已受理，即将入睡。",
                     "ok": True}
         if force:
             state.pop("sleepAskedAt", None)
             timers._write(timers.CHARACTER, ch)
             timers.set_sleeping(True)
             return {"line": str(line or "").strip() or None,
-                    "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
+                    "已执行": "睡眠请求已受理，即将入睡。",
                     "ok": True}
 
         sleepy = float((ch.get("metabolism") or {}).get("sleepiness") or 0)
