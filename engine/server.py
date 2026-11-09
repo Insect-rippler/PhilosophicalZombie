@@ -559,8 +559,38 @@ def should_wake(now=None):
     return quiet and not sleeping()           # 静默到期且醒着
 
 
+_MAINTAIN_LOCK = threading.Lock()
+
+
+def kick_maintenance():
+    """睡够了就把维护丢到后台跑：压缩 → 升格 → 写回。"""
+    if not _MAINTAIN_LOCK.acquire(blocking=False):
+        return False
+    try:
+        import maintain
+    except Exception:                      # noqa: BLE001
+        _MAINTAIN_LOCK.release()
+        return False
+    if not maintain.pending_mark():
+        _MAINTAIN_LOCK.release()
+        return False
+
+    def job():
+        try:
+            result = maintain.run()
+            log("maintain.done", ok=result.get("ok"), reason=str(result.get("reason") or "")[:60])
+        except Exception as exc:           # noqa: BLE001
+            log("maintain.failed", error=f"{type(exc).__name__}: {exc}"[:120])
+        finally:
+            _MAINTAIN_LOCK.release()
+
+    threading.Thread(target=job, daemon=True).start()
+    return True
+
+
 def idle_tick():
     """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
+    kick_maintenance()
     timers.tick_lock()
     try:
         body.observe()            # 先把对方这一轮做的事结算掉
