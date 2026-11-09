@@ -487,6 +487,8 @@ class ChatPage(QWidget):
         self._poll_timer.setInterval(6000)
         self._poll_timer.timeout.connect(self._poll_history)
         self._poll_timer.start()
+        from PySide6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("F5"), self, activated=self.reload_all)
         self._seen = 0
 
         row_outer = QHBoxLayout(self)
@@ -554,9 +556,14 @@ class ChatPage(QWidget):
         self.input = QLineEdit()
         self.input.setPlaceholderText("说点什么…")
         self.input.returnPressed.connect(self.send)
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.setToolTip("从服务端重新载入会话与状态（F5）")
+        refresh_btn.clicked.connect(self.reload_all)
+
         send_btn = QPushButton("发送")
         send_btn.clicked.connect(self.send)
         row.addWidget(self.input, 1)
+        row.addWidget(refresh_btn)
         row.addWidget(send_btn)
         outer.addLayout(row)
         outer.addWidget(bar)
