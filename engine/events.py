@@ -73,13 +73,21 @@ def in_hours(hour, span):
 
 
 def current_place_id(ch):
+    """当前地点标识：优先用世界包里的 id，其次按环境表的键名匹配。"""
     root = active_world()
     local = str(ch.get("local") or "")
-    if not root or not local:
+    if not local:
         return ""
-    places = _read(root / "places.json", {}).get("places") or []
-    hit = next((p for p in places if p.get("path") == local), None)
-    return hit.get("id") if hit else local.rsplit("/", 1)[-1]
+    if root:
+        places = _read(root / "places.json", {}).get("places") or []
+        hit = next((p for p in places if p.get("path") == local), None)
+        if hit:
+            return hit.get("id")
+    table = timers.places() or {}
+    for name in table:
+        if name in local:
+            return name
+    return local.rsplit("/", 1)[-1]
 
 
 def build_ctx(ch, now, seen):

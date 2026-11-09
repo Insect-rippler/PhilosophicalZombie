@@ -51,5 +51,33 @@
     "risky": 0,
     "regulars": [],
     "indoor": true
+  },
+  "甲板": {
+    "public": true,
+    "indoor": false,
+    "nightCrowd": "稀少",
+    "risky": 2,
+    "regulars": []
+  },
+  "厨房": {
+    "public": true,
+    "indoor": true,
+    "nightCrowd": "极少",
+    "risky": 1,
+    "regulars": []
+  },
+  "地块边缘": {
+    "public": false,
+    "indoor": false,
+    "nightCrowd": "无人",
+    "risky": 4,
+    "regulars": []
+  },
+  "后巷": {
+    "public": false,
+    "indoor": false,
+    "nightCrowd": "无人",
+    "risky": 3,
+    "regulars": []
   }
 }

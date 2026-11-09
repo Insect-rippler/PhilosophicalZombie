@@ -279,6 +279,19 @@ brain 想做事 → 调 active(description, slot)
 
 时长来源：日常行为按常识判，量级写在 `body/judge.json`；特殊行为（锻造、治疗、委托、长途）查 `world/activities.json`，以表里的 `duration` 为准。日常行为不建表——模型对「洗个澡要多久」的常识比表更可靠，建表只是维护负担。
 
+## 地点与环境
+
+两张表各管一件事，都在 `ConsciousnessRealm/world/`：
+
+| 文件 | 内容 | 谁读 |
+|---|---|---|
+| `places.json` | 地点名 → 室内外、夜间人流、风险、常驻的人 | `timers.render_environment` |
+| `ognisko/places.json` | 地图：id、path、相连关系与步行分钟 | `events.current_place_id`、移动判定 |
+
+`places.json` 是**环境与风险**的来源，缺一个地点，state 里就没有那一行；
+`ognisko/places.json` 是**地图拓扑**，缺一个地点，走动时长就只能估。
+两边都加齐最稳；只有一边时，代码会退回到按名字匹配。
+
 ## 世界包
 
 每张大地图是一个独立的 world pack，换世界只改 `world/active.json` 的指向：
