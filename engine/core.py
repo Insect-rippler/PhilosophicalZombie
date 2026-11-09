@@ -417,6 +417,9 @@ def _render_goal(goal):
         if evidence:
             line += f" —— {evidence}"
         lines.append(line)
+        fallback = str(st.get("fallback") or "").strip()
+        if fallback:
+            lines.append(f"      · 若不成：{fallback}")
     if lo > 0:
         lines.insert(1, f"  - （前 {lo} 步已完成）")
     if hi < len(steps):

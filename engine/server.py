@@ -296,6 +296,7 @@ def session_history(limit=40):
     if not core.SESSION_PATH.exists():
         return []
     rows = []
+    raw_items = []
     for raw in core.SESSION_PATH.read_text(encoding="utf-8").splitlines():
         raw = raw.strip()
         if not raw:
@@ -304,6 +305,12 @@ def session_history(limit=40):
             item = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        raw_items.append(item)
+
+    results = {it.get("tool_call_id"): str(it.get("content") or "")
+               for it in raw_items if it.get("role") == "tool"}
+
+    for item in raw_items:
         role = item.get("role")
         if role == "system":
             continue
@@ -322,6 +329,9 @@ def session_history(limit=40):
                         args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                     except json.JSONDecodeError:
                         args = {}
+                    receipt = results.get(call.get("id") or "", "")
+                    if "未执行" in receipt or '"ok": false' in receipt:
+                        continue
                     scene = str(args.get("scene") or "").strip()
                     desc = str(args.get("description") or "").strip()
                     said = str(args.get("line") or "").strip()
@@ -733,7 +743,9 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((query.get("limit") or ["40"])[0])
             except ValueError:
                 limit = 40
-            return self._json({"messages": session_history(limit)})
+            rows = session_history(limit)
+            return self._json({"messages": rows,
+                               "total": len(session_history(100000))})
         if path == "/skill":
             return self._json(skill_text())
         if path == "/usage":

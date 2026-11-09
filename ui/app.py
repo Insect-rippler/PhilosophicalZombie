@@ -586,9 +586,11 @@ class ChatPage(QWidget):
     def load_history(self):
         """启动时把 session 回放出来，切页不会丢对话。"""
         try:
-            rows = api_get("/history?limit=40").get("messages") or []
+            data = api_get("/history?limit=40")
         except Exception:                    # noqa: BLE001
             return
+        rows = data.get("messages") or []
+        self._seen = int(data.get("total") or len(rows))
         group = None
         for row in rows:
             role = row.get("role")
@@ -628,22 +630,25 @@ class ChatPage(QWidget):
         if self.worker and self.worker.isRunning():
             return
         try:
-            rows = api_get("/history?limit=60").get("messages") or []
+            data = api_get("/history?limit=80")
         except Exception:                    # noqa: BLE001
             return
-        if not rows:
+        rows = data.get("messages") or []
+        total = int(data.get("total") or len(rows))
+        if total == 0:
             self._clear_bubbles()
             return
         if self._seen == 0:
-            self._seen = len(rows)
+            self._seen = total
             return
-        if len(rows) < self._seen:          # 会话被清空或回滚：重画
+        if total < self._seen:              # 会话被清空或回滚：重画
             self._clear_bubbles()
             self._seen = 0
             return
-        if len(rows) == self._seen:
+        if total == self._seen:
             return
-        for row in rows[self._seen:]:
+        fresh = rows[-(total - self._seen):]
+        for row in fresh:
             role = row.get("role")
             text = str(row.get("text") or "")
             if not text:
@@ -656,7 +661,7 @@ class ChatPage(QWidget):
                 self.add_bubble("tip", text)
             elif role in ("user", "assistant"):
                 self.add_bubble(role, text, ts=row.get("ts") or "")
-        self._seen = len(rows)
+        self._seen = total
         self.scroll_to_bottom()
 
     def _tick_clock(self):
@@ -963,6 +968,12 @@ class ChatPage(QWidget):
         if self._tip_group is not None:
             self._tip_group.collapse()
             self._tip_group = None
+        # 这一轮已经流式画过了，把轮询游标推到服务端末尾，避免重复渲染
+        try:
+            data = api_get("/history?limit=20")
+            self._seen = int(data.get("total") or 0)
+        except Exception:                    # noqa: BLE001
+            pass
         self.refresh_state()
 
     def _on_error(self, message):

@@ -684,12 +684,24 @@ def advance(now=None):
 
 # (起始小时, 名称)：13 点就是下午，不是一个区间刚好在某处断开
 DAY_PARTS = ((0, "深夜"), (5, "清晨"), (8, "上午"), (11, "中午"),
-             (13, "下午"), (17, "傍晚"), (22, "夜里"))
+             (13, "下午"), (17, "傍晚"), (19, "夜里"))
 
+
+
+# 时段后面带一句行为含义：她照着这个说话，不用自己估
+PART_HINT = {
+    "深夜": "天全黑，街上没人",
+    "清晨": "天刚亮，人少",
+    "上午": "天亮了，街上有人来往",
+    "中午": "日头最高，铺子开着",
+    "下午": "日头偏西，还亮着",
+    "傍晚": "天还亮着，街上还有人",
+    "夜里": "天黑了，人往回走",
+}
 
 
 def clock_text(now=None):
-    """返回 "21:07（夜里）" 这种带时段的时间串。"""
+    """返回 "21:07（夜里，天黑了，人往回走）" 这种带行为含义的时间串。"""
     now = time.time() if now is None else float(now)
     tm = time.localtime(now)
     hour = tm.tm_hour
@@ -697,7 +709,8 @@ def clock_text(now=None):
     for edge, label in DAY_PARTS:
         if hour >= edge:
             part = label
-    return f"{time.strftime('%H:%M', tm)}（{part}）"
+    hint = PART_HINT.get(part, "")
+    return f"{time.strftime('%H:%M', tm)}（{part}{'，' + hint if hint else ''}）"
 
 
 def stage_tables():
