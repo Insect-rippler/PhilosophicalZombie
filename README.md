@@ -145,7 +145,8 @@ slices.json  blocks.json  MEMORY.md   PERSONA.md
 
 ## 记忆升格
 
-每晚一次，由 `engine/dream.py` 跑三个阶段。触发方式以后交给 `state`（睡着时触发），开发期手动：
+每次睡够（睡着超过 3 小时）醒来时自动跑一次：`idle_tick` 里检查 `maintenance.json` 的 due，
+后台线程执行 `maintain.py`（提要 → 压缩 → 三阶段升格）。也可以手动跑：
 
 ```bash
 python engine/dream.py --stage 1 --dry-run     # 只看会写什么
@@ -322,7 +323,7 @@ state/realTime/
 └── pending.json     # 到期文本缓存池（下一轮取走清空）
 ```
 
-字段约定：`kind`（`action` / `event`）、`slot`（`short` ≤1 分钟 / `long` >1 分钟）、`silent`（只结算不提示）、`chance`（概率，1000 = 一定触发）。只有 `event` 类到期需要唤醒主代理，动作类只是随下一轮带过去。
+字段约定：`kind`（`action` / `event` / `alarm`）、`slot`（`short` / `long` / `event` / `alarm`）、`silent`（只结算不提示）、`chance`（概率，1000 = 一定触发）。只有 `event` 类到期需要唤醒主代理，动作类只是随下一轮带过去。
 
 ## 工具
 
