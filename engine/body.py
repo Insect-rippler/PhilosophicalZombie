@@ -626,22 +626,35 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         if (ch.get("state") or {}).get("active") == "sleep":
             return {"line": str(line or "").strip() or None,
                     "已执行": "她已经在睡了。", "ok": True}
-        # 二次确认：太早睡、又睡不满六小时，先说清后果
+        # 二次确认：第一次只告知后果，五分钟内再递一次才真的睡下
         now = time.time()
-        hour = time.localtime(now).tm_hour
-        sleepy = float((ch.get("metabolism") or {}).get("sleepiness") or 0)
-        expect_h = max(0.5, (sleepy - timers.SLEEP_REST_TO) / 7.0)
-        early = hour >= 17 or hour < 4
-        if early and expect_h < 6 and not force:
-            wake_at = time.strftime("%H:%M", time.localtime(now + expect_h * 3600))
+        state = ch.setdefault("state", {})
+        asked = state.get("sleepAskedAt")
+        if asked and now - float(asked) <= 300 and not force:
+            state.pop("sleepAskedAt", None)
+            timers._write(timers.CHARACTER, ch)
+            timers.set_sleeping(True)
             return {"line": str(line or "").strip() or None,
-                    "未执行": (f"现在还不困。这样睡下去大约 {wake_at} 就会自己醒，"
-                              f"夜里还要醒几回，明天会更累。真想睡就带 force。"),
-                    "ok": False, "allow": False}
-        timers.set_sleeping(True)                # 只改状态
+                    "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
+                    "ok": True}
+        if force:
+            state.pop("sleepAskedAt", None)
+            timers._write(timers.CHARACTER, ch)
+            timers.set_sleeping(True)
+            return {"line": str(line or "").strip() or None,
+                    "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
+                    "ok": True}
+
+        sleepy = float((ch.get("metabolism") or {}).get("sleepiness") or 0)
+        health = float((ch.get("metabolism") or {}).get("health") or 100)
+        expect_h = max(0.5, (sleepy - timers.SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health) / 200.0)
+        wake_at = time.strftime("%H:%M", time.localtime(now + expect_h * 3600))
+        state["sleepAskedAt"] = now
+        timers._write(timers.CHARACTER, ch)
         return {"line": str(line or "").strip() or None,
-                "已执行": "动作已受理：她睡下了。醒来的时间由生理决定；要闹钟就另外设。",
-                "ok": True}
+                "未执行": (f"要睡下吗？按现在的困意，大约 {wake_at} 就会自己醒，"
+                          f"夜里可能还要醒几回。确定的话，五分钟内再递一次。"),
+                "ok": False, "allow": False}
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
         cancelled = timers.cancel(verdict["slotId"])
