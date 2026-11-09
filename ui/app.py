@@ -538,6 +538,8 @@ class ChatPage(QWidget):
         self._vbar = self.scroll.verticalScrollBar()
         self._vbar.rangeChanged.connect(self._on_range)
         self._vbar.valueChanged.connect(self._on_scroll)
+        self.scroll.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.scroll.customContextMenuRequested.connect(self._chat_menu)
         outer.addWidget(self.scroll, 1)
 
         bar = QFrame()
@@ -556,14 +558,9 @@ class ChatPage(QWidget):
         self.input = QLineEdit()
         self.input.setPlaceholderText("说点什么…")
         self.input.returnPressed.connect(self.send)
-        refresh_btn = QPushButton("刷新")
-        refresh_btn.setToolTip("从服务端重新载入会话与状态（F5）")
-        refresh_btn.clicked.connect(self.reload_all)
-
         send_btn = QPushButton("发送")
         send_btn.clicked.connect(self.send)
         row.addWidget(self.input, 1)
-        row.addWidget(refresh_btn)
         row.addWidget(send_btn)
         outer.addLayout(row)
         outer.addWidget(bar)
@@ -761,6 +758,12 @@ class ChatPage(QWidget):
         self.panel.update_text("\n".join(lines))
         pending = s.get("pending") or []
         self.pending_label.setText(f"{len(pending)} 件事刚发生" if pending else "")
+
+    def _chat_menu(self, pos):
+        """消息区的右键菜单。"""
+        menu = QMenu(self)
+        menu.addAction("刷新", self.reload_all)
+        menu.exec(self.scroll.viewport().mapToGlobal(pos))
 
     def _clear_bubbles(self):
         """把消息区清空（会话被重置时用）。"""
