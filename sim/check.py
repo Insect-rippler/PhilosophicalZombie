@@ -10,9 +10,15 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ.setdefault("PZ_DATA", str(ROOT / "state"))
+# 自检必须跑在隔离目录：早期版本用 setdefault 默认成真实 state，会覆盖真实会话
+os.environ["PZ_DATA"] = str(ROOT / "state" / "sim")
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
+
+_real = (ROOT / "state").resolve()
+if Path(os.environ["PZ_DATA"]).resolve() == _real:
+    raise SystemExit("[abort] 自检不允许跑在真实 state 上")
+
 
 RESULT = []
 
