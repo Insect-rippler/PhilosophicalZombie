@@ -318,7 +318,7 @@ class Bubble(QFrame):
             label.ensurePolished()
             metrics = QFontMetrics(label.font())
             natural = metrics.horizontalAdvance(str(text)) + 44
-            label.setFixedWidth(min(1520, max(180, natural)))
+            label.setProperty("narration", True)
             layout.setContentsMargins(0, 2, 0, 2)
             row = QHBoxLayout()
             row.addStretch(1)
@@ -624,6 +624,7 @@ class ChatPage(QWidget):
 
     def _poll_history(self):
         """她自己在后台醒过来时，把新消息补进界面。"""
+        self.refresh_state()
         if self.worker and self.worker.isRunning():
             return
         try:
@@ -840,6 +841,16 @@ class ChatPage(QWidget):
         self.worker.start()
 
     def _fit_width(self, bubble):
+        if getattr(bubble, "role", "") == "narration":
+            limit = int(self.scroll.viewport().width() * 0.9)
+            labels = bubble.findChildren(QLabel)
+            if not labels:
+                return
+            label = labels[-1]
+            fm = QFontMetrics(label.font())
+            natural = fm.horizontalAdvance(label.text()) + 44
+            label.setFixedWidth(min(limit, max(220, natural)))
+            return
         bodies = getattr(bubble, "bodies", None)
         if not bodies:
             return
