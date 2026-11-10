@@ -23,6 +23,12 @@ ANCHORS = HERE / "anchors.jsonl"
 CACHE = HERE / "vectors.npz"
 
 
+def index_text(item):
+    """索引时带上标签：抽象问法（「我们算不算熟」）只靠正文召回很弱。"""
+    tags = "、".join(item.get("tags") or [])
+    return item["text"] + (f"。关键词：{tags}" if tags else "")
+
+
 def load_anchors(kind=None):
     items = []
     for line in ANCHORS.read_text(encoding="utf-8").splitlines():
@@ -44,7 +50,7 @@ def build_vectors(items):
     def sha(text):
         return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
-    keys = [sha(it["text"]) for it in items]
+    keys = [sha(index_text(it)) for it in items]
     cached = {}
     if CACHE.exists():
         try:
@@ -55,7 +61,7 @@ def build_vectors(items):
     todo = [it for it, k in zip(items, keys) if k not in cached]
     if todo:
         from model.memory_store import encode
-        fresh = encode([it["text"] for it in todo], is_query=False)
+        fresh = encode([index_text(it) for it in todo], is_query=False)
         for it, key, vec in zip(todo, [keys[items.index(it)] for it in todo], fresh):
             cached[key] = vec
         try:
