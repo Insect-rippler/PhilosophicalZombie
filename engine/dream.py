@@ -445,6 +445,8 @@ def stage2(dry_run=False):
          "model_skips": [{"text": (s.get("text") or "")[:40], "reason": s.get("reason")}
                          for s in skip][:20]})
     result = {"stage": 2, "candidates": len(blocks), "ops": len(ops), "applied": applied}
+    if applied and not dry_run and dream_cfg("tidy", True):
+        result["tidy"] = tidy_file(MEMORY_MD, "MEMORY")
     if dry_run:
         result["preview"] = ops
     return result
@@ -530,6 +532,8 @@ def stage3(dry_run=False):
                          for s in skip][:20],
          "conflict_detail": conflicts[:10]})
     result = {"stage": 3, "ops": len(ops), "applied": applied, "conflicts": len(conflicts)}
+    if applied and not dry_run and dream_cfg("tidy", True):
+        result["tidy"] = tidy_file(PERSONA_MD, "PERSONA")
     if dry_run:
         result["preview"] = ops
         result["conflict_preview"] = conflicts
@@ -557,6 +561,49 @@ STAGE_PLAN_SYSTEM = """她在睡前回顾自己手上的目标。
   {"op":"abandon","goal":"g_0001","note":"为什么不做"}
  ]}
 """
+
+
+# ---------------- 升格之后的整理 ----------------
+
+TIDY_SYSTEM = """你是一位编辑，正在整理一份角色的 Markdown 文档。
+
+任务：把重复的、同一件事说了两遍的内容合并成一处，让结构干净。
+
+规则：
+- 只合并重复，不删信息：每一条不同的意思都要留下。
+- 不新增任何事实、感受或评价，只改写法与位置。
+- 保持原有标题层级（# / ## / ### / - 条目）与第一人称。
+- 条目的措辞尽量沿用原文，不要重写成书面语。
+- 整理后长度不得少于原文的七成，也不得超过一成半的增长。
+
+输出 JSON：{"text": "整理后的完整文档"}
+"""
+
+
+def tidy_file(path, label, dry_run=False, min_ratio=0.7, max_ratio=1.15):
+    """让模型把一份文档去重整理；校验不过就不写。"""
+    text = read_md(path)
+    if len(text.strip()) < 400:                 # 太短，没什么可整的
+        return {"skipped": "文档太短"}
+    before = len(text)
+    answer = call_model(TIDY_SYSTEM, "## 文档\n\n" + text)
+    cleaned = str((answer or {}).get("text") or "").strip()
+    if not cleaned.startswith("#"):
+        log({"tidy": label, "ok": False, "reason": "输出不像文档"})
+        return {"ok": False, "reason": "输出不像文档"}
+    after = len(cleaned)
+    if not (before * min_ratio <= after <= before * max_ratio):
+        log({"tidy": label, "ok": False, "reason": "长度越界",
+             "before": before, "after": after})
+        return {"ok": False, "reason": "长度越界", "before": before, "after": after}
+    if cleaned.strip() == text.strip():
+        return {"ok": True, "changed": False, "chars": after}
+    if not dry_run:
+        backup([path])
+        path.write_text(cleaned.rstrip() + "\n", encoding="utf-8")
+    log({"tidy": label, "ok": True, "before": before, "after": after,
+         "dry_run": dry_run})
+    return {"ok": True, "changed": True, "before": before, "after": after}
 
 
 def stage_plan(dry_run=False):
