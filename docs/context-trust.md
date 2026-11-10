@@ -150,12 +150,12 @@ state 块开头加一句「这是此刻的事实，优先于记忆」
 
 ```
 [0]  system        <agent> 规则 </agent>              ← 只剩规则
-[1]  user          <appearance> 图 </appearance>      ← 图片
-[2]  user          <persona>…</persona>
-[3]  user          <character>…</character>
-[4]  user          <memory>…</memory>
-[5]  user          <lorebook>…</lorebook>
-[6]  user          <impression>…</impression>
+[1]  user          <persona>…</persona>
+[2]  user          <character>…</character>
+[3]  user          <memory>…</memory>
+[4]  user          <lorebook>…</lorebook>
+[5]  user          <impression>…</impression>
+[6]  user          <appearance> 图 </appearance>      ← 图片紧贴 session
 [7]  session       历史（user / assistant / tool）
 [8]  user          <memory_momentary>…</memory_momentary>
 [9]  user          <lorebook_momentary>…</lorebook_momentary>
@@ -184,6 +184,7 @@ state 块开头加一句「这是此刻的事实，优先于记忆」
 ### 为什么这样拆
 
 ```
+0  静态文字在前、会变的在后：图放最末，换衣服只废掉图之后的前缀
 1  每段独立成消息 → 改一段只影响那一段，不再把整块 system 顶掉
 2  标签自己说明类型 → 模型不必靠位置猜哪段是什么
 3  system 只剩规则 → 规则短、稳定，缓存命中率更高

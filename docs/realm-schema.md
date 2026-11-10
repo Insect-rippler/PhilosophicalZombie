@@ -164,14 +164,13 @@ prose: ""
 
 ```
 0  system             <agent> 规则整段
-1  user               <appearance> 图
-2  user               <persona> 字段按 2.3 的声明顺序
-3  user               <character> 字段按 2.2 的声明顺序
-4  user               <memory> anchors 按数组顺序（不排序）
-5  user               <lorebook> entries 按数组顺序
-6  user               <impression> 字段按 2.6 的声明顺序
-7  user               <skill> 常驻技能
-8  session            历史
+1  user               <persona> 字段按 2.3 的声明顺序
+2  user               <character> 字段按 2.2 的声明顺序
+3  user               <memory> anchors 按数组顺序（不排序）
+4  user               <lorebook> entries 按数组顺序
+5  user               <impression> 字段按 2.6 的声明顺序
+6  user               <appearance> 图（紧贴 session，换装只废它之后）
+7  session            历史
 9  user               <memory_momentary>
 10 user               <lorebook_momentary>
 11 user               <skill_knowledge>
