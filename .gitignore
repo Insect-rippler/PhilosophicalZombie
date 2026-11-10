@@ -28,6 +28,7 @@ vivarium/
 
 # ============ 处理产物 / 原料 ============
 state/backup/
+state/dream/
 state/media/
 state/session/
 state/tmp/
