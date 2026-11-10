@@ -300,7 +300,7 @@ class Backdrop(QWidget):
 class Bubble(QFrame):
     """一条消息。透明容器；正文按段落拆成白底子容器。"""
 
-    def __init__(self, role, text, media=None, ts=""):
+    def __init__(self, role, text, media=None, ts="", split=True):
         super().__init__()
         self.role = role
         self.bodies = []
@@ -352,7 +352,10 @@ class Bubble(QFrame):
         top.addStretch(1)
         layout.addLayout(top)
 
-        paragraphs = [block.strip() for block in str(text).split("\n") if block.strip()]
+        if split:
+            paragraphs = [block.strip() for block in str(text).split("\n") if block.strip()]
+        else:
+            paragraphs = [str(text)]
         if not paragraphs:
             paragraphs = [""]
         for paragraph in paragraphs:
@@ -796,7 +799,7 @@ class ChatPage(QWidget):
         self.load_history()
         self.scroll_to_bottom()
 
-    def add_bubble(self, role, text, media=None, ts="", split=True):
+    def add_bubble(self, role, text, media=None, ts="", split=None):
         if not ts:
             import time as _t
             ts = _t.strftime("%Y-%m-%d %H:%M:%S")
@@ -805,7 +808,8 @@ class ChatPage(QWidget):
             parts = [""]
         for index, part in enumerate(parts):
             bubble = Bubble(role, part, media if index == 0 else None,
-                            ts if index == 0 else "")
+                            ts if index == 0 else "",
+                            split=SPLIT_MESSAGES if split is None else split)
             self.messages.insertWidget(self.messages.count() - 1, bubble)
             self._fit_width(bubble)
         bar = self.scroll.verticalScrollBar()
@@ -978,6 +982,7 @@ VISIBLE = {
     "payload.temperature", "payload.user_id",
     "harness.name", "harness.usage.maxTurn",
     "harness.idle.enabled", "harness.idle.afterMinutes",
+    "harness.ui.splitMessages",
     "harness.retrieval.queryTurns.withMessage",
     "harness.retrieval.queryTurns.maxChars",
     "harness.retrieval.memory.topK",
@@ -995,6 +1000,20 @@ VISIBLE = {
     "harness.dream.maxTokens",
     "tools.tavily.api",
 }
+
+
+SPLIT_MESSAGES = True          # 是否把一条消息按行拆成多个气泡，由配置决定
+
+
+def refresh_ui_settings():
+    """从服务端读一次界面相关的开关。"""
+    global SPLIT_MESSAGES
+    try:
+        cfg = api_get("/config")
+        SPLIT_MESSAGES = bool(((cfg.get("harness") or {}).get("ui") or {})
+                              .get("splitMessages", True))
+    except Exception:                    # noqa: BLE001
+        pass
 
 
 def visible(path):
@@ -1029,6 +1048,7 @@ LABELS = {
     "harness.name": "角色名",
     "harness.idle.enabled": "静默唤醒",
     "harness.idle.afterMinutes": "静默多久醒来（分钟）",
+    "harness.ui.splitMessages": "切分消息条",
     "harness.usage.maxTurn": "统计轮数",
     "harness.usage.avgWindow": "平均命中窗口",
     "harness.session.compressionThreshold": "压缩阈值",
@@ -1248,6 +1268,7 @@ class ConfigPage(QWidget):
 
         try:
             api_send("POST", "/config", {"config": config})
+            refresh_ui_settings()
             self.hint.setText("已保存")
         except Exception as error:            # noqa: BLE001
             self.hint.setText(f"保存失败：{error}")
@@ -1419,6 +1440,7 @@ class RealmPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        refresh_ui_settings()
         self.setWindowTitle(f"PhilosophicalZombie · {BUILD}")
         self.resize(1180, 760)
 
