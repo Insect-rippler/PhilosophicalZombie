@@ -283,8 +283,16 @@ def run_with_tools(payload, emit):
                        chars=len(str((call.get("function") or {}).get("arguments") or "")))
             output = tools.execute_tool_call(call, registry)
             runlog.log("tool.done", name=name, out=len(str(output)))
-            # 被代码拒绝的动作不往界面上画：回执给模型就够了
+            # 被代码拒绝的动作不画，但「话」照说——她张嘴了，只是事情没做成
             if tool_failed(output):
+                try:
+                    attempted = json.loads(args)
+                except (TypeError, ValueError):
+                    attempted = {}
+                spoken = str(attempted.get("line") or "").strip()
+                if spoken:
+                    spoken_line = (spoken_line + spoken) if spoken_line else spoken
+                    emit("tool", {"kind": "line", "name": name, "text": spoken})
                 results.append({"role": "tool", "tool_call_id": call.get("id", ""),
                                 "content": output})
                 continue
