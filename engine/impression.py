@@ -24,8 +24,6 @@ MARK = _paths.data("realTime", "impression.json")
 SESSION = _paths.data("session", "session.jsonl")
 
 SECTIONS = ("怎么认识的", "我知道的", "我不知道的", "我的分寸", "一句")
-MIN_GAP_HOURS = 6.0
-MIN_USER_MSGS = int(__import__("os").environ.get("PZ_IMPRESSION_MIN", "50"))
 
 _LOCK = threading.Lock()
 
@@ -45,28 +43,20 @@ WAKE = """[INFO] 这不是演出，也不用回应任何人。
 """
 
 
-def _read_mark():
+def _retained_turn():
+    """压缩时会保留的 U 消息条数，小于等于它就没必要整理印象。"""
+    import core
     try:
-        return json.loads(Path(MARK).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"lastAt": 0, "userMsgs": 0}
+        return int((core.harness.get("session") or {}).get("retainedTrun") or 8)
+    except (TypeError, ValueError):
+        return 8
 
 
-def _write_mark(data):
-    path = Path(MARK)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-
-def _user_messages_since(ts):
-    """只取 ts 之后他真正说过的话；ts 为 0 时取全部。"""
+def user_message_count():
     path = Path(SESSION)
     if not path.exists():
-        return []
-    since = ""
-    if ts:
-        since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts)))
-    out = []
+        return 0
+    count = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -74,21 +64,14 @@ def _user_messages_since(ts):
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("role") != "user":
-            continue
-        if since and str(row.get("ts") or "") and str(row.get("ts")) < since:
-            continue
-        out.append(str(row.get("content") or "")[:200])
-    return out
+        if row.get("role") == "user":
+            count += 1
+    return count
 
 
-def due(now=None):
-    now = time.time() if now is None else now
-    mark = _read_mark()
-    gap_h = (now - float(mark.get("lastAt") or 0)) / 3600
-    if gap_h < MIN_GAP_HOURS:
-        return False
-    return len(_user_messages_since(mark.get("lastAt"))) >= MIN_USER_MSGS
+def should_run():
+    """材料够不够：这一轮 U 消息要比保留数多，才值得整理。"""
+    return user_message_count() > _retained_turn()
 
 
 def apply_ops(text, ops):
@@ -174,26 +157,7 @@ def run(dry_run=False):
     new_text, applied, warns = apply_ops(current, ops)
     if not dry_run and applied:
         USER_PATH.write_text(new_text, encoding="utf-8")
-    if not dry_run:
-        _write_mark({"lastAt": time.time(), "userMsgs": 0})
     return {"ok": True, "applied": applied, "warns": warns, "ops": len(ops), "dry_run": dry_run}
-
-
-def maybe_update(force=False):
-    """在 idle_tick 里调用：条件满足就后台更新一次。"""
-    if not (force or due()):
-        return False
-    if not _LOCK.acquire(blocking=False):
-        return False
-
-    def job():
-        try:
-            run()
-        finally:
-            _LOCK.release()
-
-    threading.Thread(target=job, daemon=True).start()
-    return True
 
 
 if __name__ == "__main__":

@@ -717,11 +717,6 @@ def idle_tick():
     _t0 = _tt.time()
     runlog.log("turn.begin", kind="idle")
     kick_maintenance()
-    try:
-        import impression
-        impression.maybe_update()
-    except Exception:      # noqa: BLE001
-        pass
     timers.tick_lock()
     try:
         try:

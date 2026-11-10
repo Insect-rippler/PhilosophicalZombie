@@ -149,6 +149,17 @@ def run(dry_run=False):
                     **plan, "stages": stages}
     plan["stages"] = stages
 
+    # 印象：只有这一轮的 U 消息多过保留数才值得整理
+    if not dry_run:
+        try:
+            import impression
+            if impression.should_run():
+                plan["impression"] = impression.run()
+            else:
+                plan["impression"] = {"skipped": "U 消息不超过保留数"}
+        except Exception as e:               # noqa: BLE001
+            plan["impression"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
     if not dry_run:
         _write(MARK, {"due": False, "doneFor": started,
                       "finishedAt": time.time(), "summary_chars": len(summary)})
