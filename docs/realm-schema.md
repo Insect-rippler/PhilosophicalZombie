@@ -163,23 +163,24 @@ prose: ""
 ### 3.1 组装顺序（写死）
 
 ```
-1  AGENT               整段
-2  PERSONA             字段按 2.3 的声明顺序
-3  CHARACTER           字段按 2.2 的声明顺序
-4  MEMORY              anchors 按数组顺序（不排序）
-5  LOREBOOK            entries 按数组顺序
-6  USER                字段按 2.6 的声明顺序
-7  SKILL               常驻技能
-—— 以下是消息层，不属于 system ——
-8  appearance 图
-9  session
-10 检索块（memory/lorebook/skill）
-11 state
-12 plan
-13 本轮 user
+0  system             <agent> 规则整段
+1  user               <appearance> 图
+2  user               <persona> 字段按 2.3 的声明顺序
+3  user               <character> 字段按 2.2 的声明顺序
+4  user               <memory> anchors 按数组顺序（不排序）
+5  user               <lorebook> entries 按数组顺序
+6  user               <impression> 字段按 2.6 的声明顺序
+7  user               <skill> 常驻技能
+8  session            历史
+9  user               <memory_momentary>
+10 user               <lorebook_momentary>
+11 user               <skill_knowledge>
+12 user               <state>
+13 user               <plan>
+14 user               <user> 本轮的话
 ```
 
-> 顺序与现在的 `SYSTEM_BLOCKS` 一致，只是段内从“整文件”变成“按字段渲染”。
+> 每条背景段都是独立消息、各自带闭合标签；system 里只剩 `<agent>` 规则。
 
 ### 3.2 模板（示例）
 

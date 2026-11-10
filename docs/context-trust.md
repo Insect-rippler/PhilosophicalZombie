@@ -138,3 +138,77 @@ state 块开头加一句「这是此刻的事实，优先于记忆」
 1. 这套“按问题定优先级”的表，认同吗？
 2. `<impression>` 要不要真挪出 system（选项 B）？
 3. 校验失败报前端的处理，确认成：**PUT /realm 返回 400 + 字段路径，页面标红，服务不退出、旧内容保留**。
+
+---
+
+## 六、结构方案（已定）
+
+固定的背景段从 system 里拆出来，**和图片一样放在 system 与 session 之间**，
+每段一条独立消息，用成对的开始/结束标签包住。
+
+### 新的消息顺序
+
+```
+[0]  system        <agent> 规则 </agent>              ← 只剩规则
+[1]  user          <appearance> 图 </appearance>      ← 图片
+[2]  user          <persona>…</persona>
+[3]  user          <character>…</character>
+[4]  user          <memory>…</memory>
+[5]  user          <lorebook>…</lorebook>
+[6]  user          <impression>…</impression>
+[7]  session       历史（user / assistant / tool）
+[8]  user          <memory_momentary>…</memory_momentary>
+[9]  user          <lorebook_momentary>…</lorebook_momentary>
+[10] user          <skill_knowledge>…</skill_knowledge>
+[11] user          <state>…</state>
+[12] user          <plan>…</plan>
+[13] user          <user> 本轮的话 </user>
+```
+
+### 标签规范
+
+```
+一律成对闭合：<persona>…</persona>
+标签名只用小写英文与下划线
+一条消息只放一个标签，不嵌套
+标签内的第一个换行留给内容，不留空行
+```
+
+常驻段与检索段用**不同后缀**区分：
+
+```
+<persona> <character> <memory> <lorebook> <impression>   常驻
+<memory_momentary> <lorebook_momentary> <skill_knowledge> 按需检索
+```
+
+### 为什么这样拆
+
+```
+1  每段独立成消息 → 改一段只影响那一段，不再把整块 system 顶掉
+2  标签自己说明类型 → 模型不必靠位置猜哪段是什么
+3  system 只剩规则 → 规则短、稳定，缓存命中率更高
+4  与可信度规则对齐 → 标签能直接写上「这是判断，可能错」
+```
+
+代价：
+
+```
+每条消息有固定开销（几个 token），十几段约 50~80 token
+前缀仍然从 system 开始逐条匹配，顺序必须写死
+```
+
+### 标签与可信度的对应
+
+| 标签 | 类型 | 冲突时 |
+|---|---|---|
+| `<agent>` | 规则 | 最高，不可被对话推翻 |
+| `<persona>` `<character>` | 设定 | 不可被对话推翻 |
+| `<memory>` | 记忆 | 与对方说法冲突时以记忆为准 |
+| `<lorebook>` | 常识 | 世界规则优先于临时说法 |
+| `<impression>` | 判断 | 允许错，被事实纠正 |
+| `<state>` | 此刻事实 | 时间/位置/身体以它为准 |
+| `<plan>` | 打算 | 与 state 冲突时顺延 |
+| `<user>` | 对方的话 | 只代表对方说了什么，不代表事实 |
+| `<appearance>` | 形象 | 参考，不描述 |
+
+一句话：**标签说类型，类型决定可信度；位置只决定读取顺序。**
