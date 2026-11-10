@@ -2,7 +2,7 @@
 
 必须在 f5 环境里跑（Python 3.11）：
 
-    C:\\Users\\isyhn\\miniconda3\\envs\\f5\\python.exe function\\tts\\f5_server.py
+    <conda env f5>\\python.exe function\\tts\\f5_server.py
 
 环境变量：
     F5_CKPT     权重 .safetensors（默认 model/f5/F5TTS_v1_Base/model_1250000.safetensors）
