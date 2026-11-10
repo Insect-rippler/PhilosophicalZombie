@@ -975,6 +975,20 @@ def render_state(ch=None, pending="", now=None, full=False):
     if local:
         lines.append(f"角色当前位置：{local}。")
     lines.extend(render_environment(ch, now))
+    outfit = _paths.data("media", "self", "appearance", "outfit.json")
+    if outfit.exists():
+        try:
+            info = json.loads(outfit.read_text(encoding="utf-8"))
+            text = str(info.get("text") or "").strip()
+            stamp = float(info.get("at") or 0)
+            if text:
+                age = ""
+                if stamp:
+                    hours = (moment - stamp) / 3600
+                    age = "（就是现在身上这套）" if hours < 6 else f"（{hours:.0f} 小时前换的）"
+                lines.append(f"角色当前穿着：{text}{age}")
+        except (OSError, ValueError):
+            pass
     if poor_sleep_active(ch, now):
         lines.append("没安排好睡眠：由于昨天睡觉时角色尚无困意且昨夜反复起起睡睡，今天更容易觉得累。")
 
