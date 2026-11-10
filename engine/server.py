@@ -87,6 +87,19 @@ def strip_context_leak(text):
     return text
 
 
+def tool_failed(output):
+    """工具回执是不是拒绝/失败。这种不该渲染成动作。"""
+    try:
+        data = json.loads(output)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    if data.get("ok") is False:
+        return True
+    return bool(str(data.get("未执行") or "").strip())
+
+
 def run_with_tools(payload, emit):
     """跑一轮（含工具）。返回 (是否已经产出结果, 最终文本)。
 
@@ -270,6 +283,12 @@ def run_with_tools(payload, emit):
                        chars=len(str((call.get("function") or {}).get("arguments") or "")))
             output = tools.execute_tool_call(call, registry)
             runlog.log("tool.done", name=name, out=len(str(output)))
+            # 被代码拒绝的动作不往界面上画：回执给模型就够了
+            if tool_failed(output):
+                results.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                                "content": output})
+                continue
+
             scene = said = None
             if name == "active":
                 try:
