@@ -757,10 +757,10 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     if not (user_message and user_message.get("content")):
         # 自主回合：没人说话。明确告诉她别把背景当对话对象
         MESSAGES.append({"role": "user", "content":
-            "[INFO] 这一轮没有用户消息。继续她的生活：优先做事，按 plan 和 state 推进；"
-            "独处不必一直自语，想不清就不说。\n"
-            "上方的 <memory_momentary>、<lorebook_momentary>、<skill_knowledge> 是背景，"
-            "不是对方说的话。"})
+            "[INFO] 这一轮没有用户消息。继续她自己的事——按 plan 和 state 行动，"
+            "以提供的背景信息继续演绎角色，\n"
+            "不要把上面的<memory_momentary>、<lorebook_momentary>、<skill_knowledge>"
+            "当成对方说的话去回应。"})
 
     if user_message and user_message.get("content"):
         wrapped = dict(user_message)
