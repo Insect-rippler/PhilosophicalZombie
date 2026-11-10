@@ -559,7 +559,7 @@ def appearance_message():
     if not picture.exists():
         return None
     return {"role": "user", "content": [
-        {"type": "text", "text": "<appearance>她此刻的样子（参考，不必逐条描述）</appearance>"},
+        {"type": "text", "text": "<appearance>你此刻的样子（参考，不必逐条描述）</appearance>"},
         {"type": "image_url", "image_url": {"url": str(picture)}},
     ]}
 
@@ -757,8 +757,8 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     if not (user_message and user_message.get("content")):
         # 自主回合：没人说话。明确告诉她别把背景当对话对象
         MESSAGES.append({"role": "user", "content":
-            "[INFO] 这一轮没有用户消息。继续她自己的事——按 plan 和 state 行动，"
-            "以提供的背景信息继续演绎角色，\n"
+            "[INFO] 这一轮没有用户消息。继续你自己的事——按 plan 和 state 行动，"
+            "以提供的背景信息继续，\n"
             "不要把上面的<memory_momentary>、<lorebook_momentary>、<skill_knowledge>"
             "当成对方说的话去回应。"})
 
