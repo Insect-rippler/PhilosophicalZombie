@@ -975,6 +975,19 @@ def render_state(ch=None, pending="", now=None, full=False):
     if local:
         lines.append(f"角色当前位置：{local}。")
     lines.extend(render_environment(ch, now))
+    outfit = _paths.data("media", "self", "appearance", "outfit.json")
+    if outfit.exists():
+        try:
+            info = json.loads(outfit.read_text(encoding="utf-8"))
+            text = str(info.get("text") or "").strip()
+            stamp = float(info.get("at") or 0)
+            if text:
+                hours = (moment - stamp) / 3600 if stamp else 0
+                age = f"（最近一次换衣是在 {hours:.0f} 小时前）" if hours >= 6 else ""
+                lines.append(f"角色当前穿着：{text}{age}。")
+        except (OSError, ValueError):
+            pass
+
     busy = [t for t in load_timers()
             if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
     if busy:

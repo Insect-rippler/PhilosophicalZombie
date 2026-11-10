@@ -559,21 +559,6 @@ def appearance_message():
     if not picture.exists():
         return None
     caption = "<appearance>你此刻的样子（参考，不必逐条描述）</appearance>"
-    outfit = picture.parent / "outfit.json"
-    if outfit.exists():
-        try:
-            info = json.loads(outfit.read_text(encoding="utf-8"))
-            text = str(info.get("text") or "").strip()
-            stamp = float(info.get("at") or 0)
-            if text:
-                age = ""
-                if stamp:
-                    hours = (time.time() - stamp) / 3600
-                    if hours >= 6:
-                        age = f"（{hours:.0f} 小时前换的）"
-                caption += f"\n当前穿着：{text}{age}"
-        except (OSError, ValueError):
-            pass
     return {"role": "user", "content": [
         {"type": "text", "text": caption},
         {"type": "image_url", "image_url": {"url": str(picture)}},
