@@ -9,9 +9,10 @@
 由触发器发起：`POST /turn`（真人说话）或 `idle_tick()`（计时到、静默到期、事件吵醒）。
 
 ```
-① 组装上下文
-   system → appearance(图) → session → memory → lorebook → skill → state → plan → user
-   每一段都从对应的静态文件现取，不经缓存、不攒中间态
+① 组装上下文（全在内存里完成，不写任何中间文件）
+   a. search_text：session 尾部 + 本轮 user 消息，约 500 字
+   b. 三路检索：memory（向量）· lorebook（正则）· skill（正则）
+   c. 拼接：system → appearance(图) → session → 三块 → state → plan → user
 
 ② 发请求
    stream=true，工具表随行
@@ -23,26 +24,59 @@
 ④ 执行工具
    启动：建计时器、写 state、给回执
    拒绝：回执写原因，不渲染动作（台词照发）
-
-⑤ 组 search_text
-   供「下一次」调用做检索用，见下
 ```
 
-### search_text 是什么
+### 为什么检索必须放在组装里
 
-`core.search_text_make()`：从 session 末尾往回抓，攒到约 500 字为止。
+检索的查询词是 `search_text`，而它**必须包含本轮 user 那句话**。
 
 ```
-抓什么    user / assistant 的正文，以及 active 的 description 与 scene
-顺序      新的在前
-截断      总量超过 harness.retrieval.queryTurns.maxChars（默认 500）就停
-用途      下一次组装的 memory / lorebook / skill 三路检索的查询词
+如果先发请求、拿到工具结果后再检索：
+    用户这一句要到下一轮才参与检索，本轮召回的是旧话题
 ```
 
-它**不按时间窗口截断**——睡一觉醒来，睡前那几轮仍要参与检索，
-否则“昨天答应过什么”这类事永远想不起来。
+所以顺序只能是：先拼查询词 → 检索 → 再拼完整上下文 → 发请求。
 
----
+### 检索在内存里，不落盘
+
+```
+memory      向量检索（model/bge-small-zh-v1.5，512 维）
+lorebook    正则/关键词匹配
+skill       正则/关键词匹配
+```
+
+三者都只返回字符串块，直接拼进消息，不经过任何 JSON 文件。
+落盘的只有检索不到的原始料（slices / blocks / lorebook / skill），那是数据，不是中间产物。
+
+### 一次调用的滞后（已知且可接受）
+
+工具在**本轮请求之后**才执行，所以：
+
+```
+本轮工具产生的结果（她刚看见了什么、刚走到哪）
+        ↓
+不参与本轮的检索
+        ↓
+下一轮才进 search_text
+```
+
+对用户对话回合，这意味着“她刚发生的事”要下一句才影响召回；
+对自主回合没有影响——自主回合本来就没有 user 消息，search_text 用的是 session 尾部，
+下一轮再用也一样。
+
+这是设计选择，不是缺陷：**检索的输入是“已经说过的话”，不是“正在发生的动作”。**
+
+### search_text 抓什么
+
+`core.search_text_make()`：
+
+```
+抓     user / assistant 的正文，以及 active 的 description 与 scene
+顺序   新的在前
+截断   超过 harness.retrieval.queryTurns.maxChars（默认 500）就停
+```
+
+不按时间窗口截断——睡一觉醒来，睡前的几轮仍要参与检索。
 
 ## 二、tick 线
 
@@ -100,6 +134,7 @@ tick 只结算、判定、写文件
 | 事件 | 接收（写进 state） | 产生（判定 + 子代理） |
 | state | 读 | 算（下一轮组装时现算） |
 | session | 写（助手消息、工具回执） | 不写 |
+| 检索 | 只读（在内存里组块） | 不参与 |
 | plan | 读（写只经 plan 工具） | 读（事件不改进度） |
 
 **一句话：模型线负责“她做了什么”，tick 线负责“世界过了多久”。**

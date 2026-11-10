@@ -99,7 +99,7 @@ tick 只改 state/session
 ### 一轮对话（`/turn` 或 `idle_tick`）内部的顺序
 
 ```
-① 组装上下文       system → appearance → session → 检索块 → state/plan → 本轮
+① 组装上下文       内存里完成：search_text → 三路检索 → system→图→session→块→state/plan→user
 ② 模型流式回复     delta / tool 事件实时推给前端
 ③ 工具执行         active 判定、计时器、事件
 ④ 写 session       助手消息 + 工具回执
