@@ -16,7 +16,8 @@
 
 ## 上下文组装
 
-段落顺序由 `engine/core.py` 的 `SYSTEM_BLOCKS` 与 `context_assemble` 决定。**`session` 之前的都是 system 级**，可信度高于会话内容本身。
+段落顺序由 `engine/core.py` 的 `SYSTEM_BLOCKS` 与 `context_assemble` 决定。
+**`session` 之前是 system 段和一张外观图**，可信度高于会话内容本身。
 
 | 槽位 | 来源 | 说明 |
 |---|---|---|
@@ -32,7 +33,7 @@
 | `lorebook_momentary` | `lorebook/lorebook.json` 匹配 | 具体设定，按标签命中注入 |
 | `skill_knowledge` | `skill/skill.json`（按 `keywords` 命中） | 非驻留能力，按需注入 |
 | `state` | `state/realTime/` | 常驻：时间、位置、环境、生理、刚发生的事 |
-| `appearance` | `state/media/self/appearance/appearance.png` | 她此刻的样子，一张图，紧接 system 之后 |
+| `appearance` | `state/media/self/appearance/current.png` | 她此刻的穿着，一张图，紧接 system 之后 |
 | `last_message` | 本轮 user 消息 | 唯一需要回应的内容 |
 | `plan` | `plan/agenda.json` | 角色的目标：只含进行中与搁置 |
 
@@ -56,9 +57,11 @@
 - 一条消息只放一个分区，标签成对闭合，不嵌套。
 - 标签名与 `AGENT.md` 里列出的槽位名**完全一致**，便于定位。
 - **最后一条 user 消息不加标签**——它是唯一需要回应的内容。
-- system 级段落（persona/agent/character/memory_persistent/lorebook_persistent/user）默认拼成一条 system 消息，用 `# 段落名` 分隔；若将来改成分开发送，同样用同名标签：`<persona>`、`<agent>`、`<character>`、`<memory_persistent>`、`<lorebook_persistent>`、`<user>`。
+- 前五段（persona/agent/character/memory/lorebook）拼成一条 system 消息，用 `# 段落名` 分隔；
+  `USER.md` 不在这条里，它被 `<impression>…</impression>` 包好、接在后面。
+- 自主回合（没有真人消息）时，末尾会补一条 `[INFO]`：继续自己的事，别把背景资料当成对方说的话。
 
-配套约束写在 `ConsciousnessRealm/AGENT.md` 的「分区标签」和「防注入」两节。
+配套约束写在 `ConsciousnessRealm/AGENT.md` 的「各标签怎么用」与「可信度与防注入」两节。
 
 ### 开销
 
@@ -129,8 +132,10 @@
 - **角色的视角**，第一人称，写"我认识这个人到什么程度"。
 - 由系统自动整理，不由主代理直接写。
 - 本质是角色的记忆（认知信息），单列是因为对象唯一且需时刻在场。
-- **只写不会过期的东西**：姓名、来处、稳定的判断、共同经历。
-  当前处境、刚说过的话等强时效信息交给 `state`，写进文件几轮后就会变成错的。
+- 写稳定的东西优先：姓名、来处、稳定的判断、一起经历过的事。
+  但「现在还不熟」这种当前状态也可以写——它本来就是印象的一部分，
+  只要跟着对话更新就行。
+- 文件和记忆冲突时以记忆为准；对方坚持但和记忆对不上的事，记成「他这么说」。
 
 ### 标题层级约定
 
@@ -234,10 +239,13 @@ ConsciousnessRealm/plan/
 
 | 部分 | 内容 | 用途 |
 |---|---|---|
-| `plans/` | 目标最后一次的完整快照 | 回溯"她当时到底想做什么" |
+| `plans/` | 目标完成或废弃时，存一份完整快照 | 回溯"她当时到底想做什么" |
 | `events.jsonl` | 增删改的流水：创建、推进一步、改方案、完成、废弃，都带 `note` | 行为记录，也是人格分析的素材 |
 
 `note` 是必填的——放弃和改方案时的理由才是有价值的材料，比目标本身更能说明她是什么人。
+
+> 注：`events.jsonl` 由 `function/plan/plan.py` 追加；`plans/` 快照只在归档时写，
+> 不是每次改动都留。
 
 写入通过 `plan` 工具完成（已注册）：规划、推进、搁置、完成都走它，`agenda.json` 一般不必手改。
 
@@ -278,16 +286,19 @@ brain 想做事 → 调 active(description, slot)
 
 判据不是「时长档位」，而是**占不占身**：
 
-| 动作 | 耗时 | 占身 |
+**每一个动作都占时间**，没有「瞬间完成」：judge 给多久就是多久，最低 1 秒，
+到点才落数值与位置。
+
+| 动作 | 典型耗时 | 槽位 |
 |---|---|---|
-| 说一句话、抬眼、捋头发、倒杯水 | 几秒 | 不占，直接生效 |
-| 从房间走到门口、下一层楼 | 十几秒 | 不占，直接生效（位置立即更新） |
-| 做饭、洗澡、练剑、跨区走动 | 分钟级 | **占身**，进槽 |
-| 睡觉 | 小时级 | 占身 |
+| 抬眼、捋头发、拿起火钳 | 十几秒 | `short` |
+| 从房间走到门口、下一层楼 | 十几秒到一分钟 | `short` |
+| 做饭、洗澡、练剑、跨区走动 | 分钟到小时 | `long` |
+| 打一天铁、守夜、赶路 | 半天到一整天 | `event` |
+| 睡觉 | 小时级 | `event` + `sleep` |
 
-每一个递交的动作都会建计时器，**没有「瞬间完成」**：最快 1 秒，到点才落数值与位置。几十秒的小事照样占槽，做完立刻腾出来。
-
-之前用 short/long 两个槽位是错的——捋头发和走到门口都算「一分钟内」，会互相挡住，而它们本该能随意叠加。
+几十秒的小事照样占槽，做完立刻腾出来；没做完之前再递同一槽会被拒，
+回执会写清还剩多久。
 
 三个行动槽互不阻塞，同一条回复只能递交其中一个：
 
@@ -303,6 +314,25 @@ brain 想做事 → 调 active(description, slot)
 `active(force=true)` 让她放下手上的事改做别的。被撤销的那件拿不到奖励（只有等到期结算的才有），回执里带 `cancelled`。`force` 只解除占身，不解除身体限制——累到动不了照样拒绝。
 
 时长来源：日常行为按常识判，量级写在 `body/judge.json`；特殊行为（锻造、治疗、委托、长途）查 `world/activities.json`，以表里的 `duration` 为准。日常行为不建表——模型对「洗个澡要多久」的常识比表更可靠，建表只是维护负担。
+
+## 外观与换装
+
+`state/media/self/appearance/` 下两张图，分工固定：
+
+| 文件 | 作用 | 谁改 |
+|---|---|---|
+| `appearance.png` | 参考底图：定脸、体形、发色，换装时只当参考 | 不动它 |
+| `current.png` | 当前穿着，每轮注入 `<appearance>` 的那张 | 换装工具覆盖 |
+
+- 注入优先读 `current.png`，没有就退回底图；模拟器没有自己的图时只读借用真实那份。
+- 每轮请求都带这张图，但**只有换图那一次需要上传**：发送前由 `file_api` 换成 `file_id`，
+  之后命中缓存直接复用（实测首次约 2 秒，之后 0.02 秒）。
+- 换装调本机的 `appearance` 工具：必填 `outfit`，可补 `action` / `scene`；
+  它读底图当参考、写 `current.png`，并在 `state/media/self/` 另存一份带时间戳的副本。
+
+> 注意：工具 schema 不要写太长。之前给 `appearance` 加了 `size` 枚举和四条长描述，
+> 整份工具列表变长后，模型开始「用文字模拟工具调用」而不是真的调 `active`；
+> 压回三个参数就恢复了。
 
 ## 地点与环境
 
@@ -381,11 +411,19 @@ state/realTime/
 
 | 工具 | 路径 | 用途 |
 |---|---|---|
-| `tavilySearch` / `Extract` / `Crawl` / `Map` | `function/tavily/` | 联网检索与抓取 |
-| `readFiles` / `listFiles` / `writeFile` | `function/fileOperation/` | 本地文件读写 |
+| `active` | 无脚本，由 `engine/body.py` 处理 | 声明动作，交给 body 判定并挂计时器 |
+| `alarm` | 无脚本，由 `engine/tools.py` 处理 | 独立闹钟，到点叫醒/提醒 |
+| `fight` | 无脚本，由 `engine/body.py` / `combat.py` 处理 | 回合制战斗 |
+| `remember` | `function/remember/` | 写一条记忆块，进向量库等升格 |
+| `plan` | `function/plan/` | 目标的创建、推进、搁置、完成 |
 | `sessionSummary` | `function/sessionSummary/` | 压缩会话上下文 |
+| `tavilySearch` / `Extract` / `Crawl` / `Map` | `function/tavily/` | 联网检索与抓取 |
+| `readFiles` / `listFiles` / `writeFile` | `function/fileOperation/` | 本地文件读写（依赖 `system/guard.py`） |
 | `speak` | `function/tts/speak.py` | 文本转语音，返回音频路径 |
-| `active` | 无脚本，由 `engine/body.py` 处理 | 声明持续动作，交给 body 判定并挂计时器 |
+
+**本机专用工具**不入库：脚本放 `function/<名字>/`，注册写 `function/function.local.json`，
+两者都被 `.gitignore` 排除。`load_registry` 会把本地注册表合并进来，别人克隆下来不会看到、
+也不会因为缺文件报错。当前本地挂的是 `appearance`（换装生图）。
 
 ## 本地模型
 
@@ -427,11 +465,18 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 | `modelio.py` | 请求发送与用量统计 |
 | `dream.py` | 睡着时的三级升格：切片→块 → 记忆 → 人格 |
 | `maintain.py` | 睡醒维护：提要 → 压缩切片 → 升格；失败则醒来头昏 |
-| `impression.py` | 每隔一段时间整理她对那个人的印象 |
+| `impression.py` | 梦境末尾整理她对那个人的印象（U 消息够多才做） |
 | `server.py` | 本地 HTTP 服务：界面与状态读取、回合触发、维护调度 |
 | `fsio.py` | 原子落盘：临时文件名带线程与随机串，按路径加锁 |
 | `runlog.py` | 运行日志：请求、工具、回合、崩溃都记到 `state/logs/` |
-| `impressions.py` | （见 `impression.py`）印象维护 |
+| `backup.py` | 滚动备份：启动/维护时把会话与角色状态存到 `state/backup/` |
+| `trace.py` | 逐事件轨迹（`state/tmp/trace-*.jsonl`），与 runlog 分工：一个给排查、一个给回放 |
+| `events.py` | 地点/全局事件池：随机触发、前置链 |
+| `reminders.py` | 生理提醒：到阈值必触发，不看概率 |
+| `combat.py` | 回合制战斗：暴击、治疗、低血留一口气 |
+| `commissions.py` | 委托：按难度抽敌人 |
+| `file_api.py` | Files API：本地图片换 file_id，带缓存 |
+| `paths.py` | 数据目录解析（`PZ_DATA` 可切到模拟器） |
 
 **一次完整的时间线**：
 
@@ -457,6 +502,21 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 | `crash` | 未捕获异常，带堆栈 |
 
 「她明明醒着却不动」时，先看有没有 `stream.fail`：有就是请求层，没有才是她没决定做什么。
+
+## 备份
+
+`state/backup/YYYY-MM-DD/HHMMSS-毫秒/` 下各存一份快照：
+
+```
+session/session.jsonl
+realTime/character.json
+realTime/timers.json
+realTime/events.json
+realTime/maintenance.json
+```
+
+- 触发：服务启动时、每次维护完成后各一次；手动 `python engine/backup.py`。
+- 每次一份、按时间分目录，同一天多次备份不会互相覆盖；保留 14 天。
 
 ## 重置
 
@@ -502,7 +562,10 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 body 拿到完整数值，用来判断时长与可行性。
 
 睡眠按入睡时的困意推算预期时长，睡满之后才掷苏醒骰子；
-饥饿、口渴、疲惫、健康都会提高夜里醒来的概率，设了闹钟则以闹钟为准。
+饥饿、口渴、疲惫、健康都会提高夜里醒来的概率。
+
+闹钟只负责「到点叫醒」：它不会压住生理自己醒——困意掉到阈值以下，她会比闹钟先醒，
+醒来时 state 会告诉她闹钟定在几点。
 
 ## 印象维护
 
