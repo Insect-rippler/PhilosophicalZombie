@@ -1269,6 +1269,14 @@ class ConfigPage(QWidget):
         try:
             api_send("POST", "/config", {"config": config})
             refresh_ui_settings()
+            # 界面开关变了，已有的消息按新设置重画一遍
+            try:
+                pages = getattr(self.window(), "pages", None)
+                chat = pages.findChild(ChatPage) if pages is not None else None
+                if chat is not None:
+                    chat.reload_all()
+            except Exception:            # noqa: BLE001
+                pass
             self.hint.setText("已保存")
         except Exception as error:            # noqa: BLE001
             self.hint.setText(f"保存失败：{error}")
