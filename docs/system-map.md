@@ -159,11 +159,15 @@ flowchart TD
 
 ---
 
-## 五、两处待改（已单独写文档）
+## 五、待改（已单独写文档）
 
 ```
 事件      地点事件退役：docs/events-redesign.md
 state     body 交还 + 情报补全：docs/state-and-body.md
+并发      快照与锁：docs/concurrency.md
+识域      文档格式化：docs/realm-format.md（未定，先记着）
 ```
 
-两份文档的改动都落在这张图的第 ②③ 步与 tick 第 ④ 步，按 **事件 → state → body** 一次改完。
+前三份的改动都落在这张图的第 ②③ 步与 tick 第 ④ 步，
+建议顺序：**快照 → 事件 → state → body**（快照是地基）。
+识域格式化等空白卡字段确定后再动，不排期。
