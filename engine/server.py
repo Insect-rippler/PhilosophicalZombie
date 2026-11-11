@@ -738,6 +738,70 @@ def kick_maintenance():
     return True
 
 
+# ---------------- 手动任务 ----------------
+
+JOBS = {}                      # name -> {running, started, result}
+JOBS_LOCK = threading.Lock()
+
+MANUAL = {
+    "backup": "备份一次",
+    "reindex": "重算向量库",
+    "repair": "修复会话",
+    "maintain": "跑一次维护",
+}
+
+
+def _run_job(name):
+    import time as _t
+    import traceback
+
+    started = _t.time()
+    try:
+        if name == "backup":
+            import backup
+            count = backup.snapshot("manual")
+            try:
+                backup.prune()
+            except Exception:                # noqa: BLE001
+                pass
+            result = {"ok": True, "detail": f"{count} 个文件"}
+        elif name == "reindex":
+            import sys as _sys
+            _sys.path.insert(0, str(ROOT / "model"))
+            import memory_store
+            store = memory_store.lib()
+            got = store.sync_all()
+            result = {"ok": True,
+                      "detail": f"新增 {got.get('added', 0)}，更新 {got.get('updated', 0)}，"
+                                f"删除 {got.get('removed', 0)}"}
+        elif name == "repair":
+            fixed = core.repair_session()
+            result = {"ok": True, "detail": f"修了 {fixed} 行"}
+        elif name == "maintain":
+            import maintain
+            with LOCK:
+                result = maintain.run()
+        else:
+            result = {"ok": False, "detail": "未知任务"}
+    except Exception as exc:                 # noqa: BLE001
+        traceback.print_exc()
+        result = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"[:200]}
+    result["ms"] = int((_t.time() - started) * 1000)
+    with JOBS_LOCK:
+        JOBS[name] = {"running": False, "started": started, "result": result}
+
+
+def start_job(name):
+    if name not in MANUAL:
+        return {"ok": False, "detail": "未知任务"}
+    with JOBS_LOCK:
+        if JOBS.get(name, {}).get("running"):
+            return {"ok": False, "detail": "已经在跑"}
+        JOBS[name] = {"running": True, "started": time.time(), "result": None}
+    threading.Thread(target=_run_job, args=(name,), daemon=True).start()
+    return {"ok": True, "started": True}
+
+
 def idle_tick():
     """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
     import time as _tt
@@ -861,6 +925,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(skill_text())
         if path == "/usage":
             return self._json(last_usage())
+        if path == "/action":
+            with JOBS_LOCK:
+                data = {name: {"running": bool(job.get("running")),
+                               "result": job.get("result")}
+                        for name, job in JOBS.items()}
+            return self._json({"available": MANUAL, "jobs": data})
         if path == "/state":
             return self._json(state_snapshot())
         if path == "/config":
@@ -886,6 +956,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/turn":
             return self._turn(self._body())
+        if path == "/action":
+            data = self._body()
+            name = str((data or {}).get("action") or "").strip()
+            return self._json(start_job(name))
         if path == "/config":
             return self._save_config(self._body())
         if path == "/skill":

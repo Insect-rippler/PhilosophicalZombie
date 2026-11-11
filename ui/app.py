@@ -13,13 +13,13 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
                            QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSizePolicy, QSplitter,
+                               QPushButton, QGroupBox, QScrollArea, QSizePolicy, QSplitter,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 BASE = os.environ.get("PZ_SERVER", "http://127.0.0.1:8765")
@@ -1135,6 +1135,22 @@ class ConfigPage(QWidget):
         save.clicked.connect(self.save)
         head.addWidget(save)
         outer.addLayout(head)
+        self.actions_box = QGroupBox("手动任务")
+        actions_layout = QVBoxLayout(self.actions_box)
+        actions_layout.setContentsMargins(12, 8, 12, 10)
+        actions_layout.setSpacing(6)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.action_buttons = {}
+        self.action_hint = QLabel("")
+        self.action_hint.setObjectName("info")
+        self.action_hint.setWordWrap(True)
+        actions_layout.addLayout(row)
+        actions_layout.addWidget(self.action_hint)
+        self.action_timer = QTimer(self)
+        self.action_timer.setInterval(1500)
+        self.action_timer.timeout.connect(self.poll_actions)
+        outer.addWidget(self.actions_box)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -1147,6 +1163,58 @@ class ConfigPage(QWidget):
         outer.addWidget(self.scroll, 1)
 
         self.load()
+        self.build_actions()
+
+    # ---- 手动任务 ----
+
+    def build_actions(self):
+        try:
+            info = api_get("/action")
+        except Exception:                    # noqa: BLE001
+            self.actions_box.setVisible(False)
+            return
+        row = self.action_buttons["_row"] if "_row" in self.action_buttons else None
+        layout = self.actions_box.layout().itemAt(0).layout()
+        for name, label in (info.get("available") or {}).items():
+            button = QPushButton(label)
+            button.clicked.connect(lambda _=False, n=name: self.run_action(n))
+            layout.addWidget(button)
+            self.action_buttons[name] = button
+        layout.addStretch(1)
+
+    def run_action(self, name):
+        try:
+            result = api_send("POST", "/action", {"action": name})
+        except Exception as error:            # noqa: BLE001
+            self.action_hint.setText(f"启动失败：{error}")
+            return
+        if not result.get("ok"):
+            self.action_hint.setText(f"没启动：{result.get('detail')}")
+            return
+        self.action_hint.setText(f"「{name}」已在后台运行…")
+        self.action_timer.start()
+
+    def poll_actions(self):
+        try:
+            info = api_get("/action")
+        except Exception:                    # noqa: BLE001
+            self.action_timer.stop()
+            return
+        running, lines = [], []
+        for name, job in (info.get("jobs") or {}).items():
+            if job.get("running"):
+                running.append(name)
+                continue
+            result = job.get("result") or {}
+            if result:
+                mark = "完成" if result.get("ok") else "失败"
+                lines.append(f"{name} {mark}：{result.get('detail', '')}"
+                             f"（{result.get('ms', 0)}ms）")
+        if running:
+            self.action_hint.setText("正在运行：" + "、".join(running))
+        else:
+            self.action_timer.stop()
+            self.action_hint.setText("\n".join(lines[-3:]) or "没有任务记录")
 
     # ---- 构建 ----
 
