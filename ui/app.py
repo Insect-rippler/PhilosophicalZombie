@@ -867,9 +867,9 @@ class ChatPage(QWidget):
             return
         try:
             remain = float(timer.get("remainingMs") or 0) / 1000.0
-            grace = float(timer.get("graceMs") or 0) / 1000.0
+            grace = max(float(timer.get("graceMs") or 0) / 1000.0, 3.0)
         except (TypeError, ValueError):
-            remain, grace = 0.0, 0.0
+            remain, grace = 0.0, 3.0
         self._view_timer_id = timer.get("id")
         self._view_timer_name = str(timer.get("label") or "")
         self._timer_deadline = _t.monotonic() + remain + grace
