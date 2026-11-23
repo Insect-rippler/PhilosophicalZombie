@@ -194,6 +194,8 @@ def run_with_tools(payload, emit, stream_id=None):
         line_final = False
         line_default = False
         other_wake = False                   # 每条 message 重新计数，不是每轮 loop 累计
+        sleep_accepted = False
+        strategy = "sleep" if sleeping() else "active"
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
 
@@ -370,6 +372,10 @@ def run_with_tools(payload, emit, stream_id=None):
             if tool_failed(output):
                 if name == "sleep":
                     other_wake = True
+                elif strategy == "sleep" and name in tools.VIRTUAL_HANDLERS:
+                    pass
+                else:
+                    other_wake = True
                 try:
                     attempted = json.loads(args)
                 except (TypeError, ValueError):
@@ -406,9 +412,9 @@ def run_with_tools(payload, emit, stream_id=None):
                     emit("tool", {"kind": "line", "name": "line", "text": said2})
                     if la.get("final") is True or str(la.get("final")).lower() in ("true", "1"):
                         line_final = True
-                    else:
+                    elif strategy != "sleep":
                         line_default = True
-                else:
+                elif strategy != "sleep":
                     line_default = True
             if name == "active":
                 if not tool_failed(output):
@@ -419,12 +425,13 @@ def run_with_tools(payload, emit, stream_id=None):
                     accepted_slot = next((k for k in ("short", "long", "event")
                                           if str(_a.get(k) or "").strip()), "")
                     active_background = (accepted_slot == "short")
-                    if accepted_slot != "short":
+                    if accepted_slot != "short" and strategy != "sleep":
                         other_wake = True
                 else:
                     other_wake = True
             if name not in ("active", "line", "pause", "sleep"):
-                other_wake = True
+                if not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
+                    other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
 
@@ -449,6 +456,8 @@ def run_with_tools(payload, emit, stream_id=None):
                            "也不要只做一个动作。）"
             }]
             continue
+        if sleep_accepted:
+            break
         # 每个工具各自决定“这一拍之后还要不要下一次唤醒”：
         # active(short)=否，line(final)=否，pause=否；其它工具=是。
         # 这些标记按 OR 合并：只要有一个工具要下一次唤醒，就继续；
