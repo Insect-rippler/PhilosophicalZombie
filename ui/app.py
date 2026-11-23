@@ -804,7 +804,6 @@ class ChatPage(QWidget):
             self.user_name = str(view.get("userName") or "").strip() or "无名者"
         self._update_bubble_names()
         self._apply_timer(view.get("timer"))
-        self.set_locked(bool(view.get("busy")))
         if not force and (self._stream_active
                           or (self.worker and self.worker.isRunning())):
             return
@@ -854,7 +853,6 @@ class ChatPage(QWidget):
 
     def _on_stream_error(self, message):
         self._stream_active = False
-        self.set_locked(False)
         self.add_bubble("narration", f"[连接出错] {message}")
         self.refresh_view()
 
@@ -1236,19 +1234,16 @@ class ChatPage(QWidget):
         self._follow = True
         # 乐观显示；后端 view 到达前由 _pending_user 兜住
         self._pending_user = {"text": text}
-        self.set_locked(True)
         self.add_bubble("user", text)
         self.scroll_to_bottom()
         try:
             data = api_send("POST", "/turn", {"text": text})
         except Exception as exc:              # noqa: BLE001
             self._pending_user = None
-            self.set_locked(False)
             self.add_bubble("narration", f"[发送失败] {type(exc).__name__}: {exc}")
             return
         if isinstance(data, dict) and data.get("error"):
             self._pending_user = None
-            self.set_locked(False)
             self.add_bubble("narration", f"[发送失败] {data['error']}")
 
     def _fit_width(self, bubble):

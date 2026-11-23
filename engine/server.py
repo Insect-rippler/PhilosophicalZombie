@@ -45,6 +45,8 @@ PORT = 8765
 TICK_SECONDS = 60          # 1 tick = 1 分钟
 HOST = "127.0.0.1"
 LOCK = threading.Lock()          # 一轮对话独占，避免两轮同时改 session
+QUEUE_LOCK = threading.Lock()
+QUEUED_TURNS = []                # 运行中收到的用户消息，等锁释放后按顺序处理
 TURN_BUSY = False                # 模型请求/工具循环进行中
 
 
@@ -1001,6 +1003,77 @@ def idle_tick():
     return 1 if reply else 0
 
 
+def _run_user_turn(text):
+    """跑一轮用户消息；调用方必须已持有 LOCK。"""
+    stream_id = f"turn-{int(time.time() * 1000)}"
+    def emit(kind, value):
+        if kind == "delta":
+            publish_stream(stream_id, str(value))
+        elif kind == "tool":
+            publish_tool(value)
+        elif kind == "error":
+            publish_error(str(value))
+    try:
+        try:
+            body.observe()
+        except Exception as exc:              # noqa: BLE001
+            log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
+        core.USER_LOOP = True
+        payload = core.context_assemble()
+        _, reply = run_with_tools(payload, emit, stream_id=stream_id)
+        publish_stream_done(stream_id, str(reply or ""))
+    except Exception as exc:                  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        publish_error(f"{type(exc).__name__}: {exc}")
+    finally:
+        global TURN_BUSY
+        core.USER_LOOP = False
+        TURN_BUSY = False
+        publish_view()
+        try:
+            LOCK.release()
+        except RuntimeError:
+            pass
+        try:
+            _drain_queued_turns()
+        except Exception:                     # noqa: BLE001
+            pass
+
+
+def _drain_queued_turns():
+    """当前轮结束后，把缓存池里的下一条用户消息接上。"""
+    global TURN_BUSY
+    with QUEUE_LOCK:
+        if not QUEUED_TURNS:
+            return
+    if not LOCK.acquire(blocking=False):
+        return
+    with QUEUE_LOCK:
+        if not QUEUED_TURNS:
+            LOCK.release()
+            return
+        text = QUEUED_TURNS.pop(0)
+    try:
+        TURN_BUSY = True
+        core.append_session([{"role": "user",
+                              "name": core.payload.get("user_id", ""),
+                              "content": text}])
+        try:
+            import events as _events
+            _events.mark_user()
+        except Exception:                     # noqa: BLE001
+            pass
+        publish_view()
+        threading.Thread(target=_run_user_turn, args=(text,), daemon=True).start()
+    except Exception:                         # noqa: BLE001
+        TURN_BUSY = False
+        try:
+            LOCK.release()
+        except RuntimeError:
+            pass
+
+
 def state_snapshot():
     ch = timers.load_character()
     marks = {}
@@ -1416,7 +1489,11 @@ class Handler(BaseHTTPRequestHandler):
         if not text:
             return self._json({"error": "text 不能为空"}, 400)
         if not LOCK.acquire(blocking=False):
-            return self._json({"error": "上一轮还没结束"}, 409)
+            with QUEUE_LOCK:
+                QUEUED_TURNS.append(text)
+                pending = len(QUEUED_TURNS)
+            return self._json({"ok": True, "accepted": True, "queued": True,
+                               "pending": pending}, 202)
         try:
             global TURN_BUSY
             TURN_BUSY = True
@@ -1429,7 +1506,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:                 # noqa: BLE001
                 pass
             publish_view()
-            threading.Thread(target=self._run_turn_locked, args=(text,),
+            threading.Thread(target=_run_user_turn, args=(text,),
                              daemon=True).start()
         except Exception as exc:              # noqa: BLE001
             TURN_BUSY = False
@@ -1438,36 +1515,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "accepted": True}, 202)
 
     def _run_turn_locked(self, text):
-        stream_id = f"turn-{int(time.time() * 1000)}"
-        def emit(kind, value):
-            if kind == "delta":
-                publish_stream(stream_id, str(value))
-            elif kind == "tool":
-                publish_tool(value)
-            elif kind == "error":
-                publish_error(str(value))
-        try:
-            try:
-                body.observe()
-            except Exception as exc:          # noqa: BLE001
-                log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
-            core.USER_LOOP = True
-            payload = core.context_assemble()
-            _, reply = run_with_tools(payload, emit, stream_id=stream_id)
-            publish_stream_done(stream_id, str(reply or ""))
-        except Exception as exc:              # noqa: BLE001
-            import traceback
-            traceback.print_exc()
-            publish_error(f"{type(exc).__name__}: {exc}")
-        finally:
-            global TURN_BUSY
-            core.USER_LOOP = False
-            TURN_BUSY = False
-            publish_view()
-            try:
-                LOCK.release()
-            except RuntimeError:
-                pass
+        _run_user_turn(text)
 
     def _save_skill(self, data):
         items = data.get("items")
@@ -1541,6 +1589,10 @@ def idle_loop():
                 except Exception:            # noqa: BLE001
                     pass
             LOCK.release()
+            try:
+                _drain_queued_turns()
+            except Exception:                # noqa: BLE001
+                pass
 
 
 def main():
