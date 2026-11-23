@@ -118,6 +118,8 @@ def chunk_group(group, agent_name, user_name):
                         lines.append(f"{agent_name}：{said}")
                 elif name == "alarm":
                     lines.append(f"（设了闹钟，{args.get('seconds')} 秒后）")
+                elif name == "pause":
+                    continue
                 elif name:
                     lines.append(f"（调用工具：{name}）")
         elif role == "tool":
@@ -168,30 +170,69 @@ def compress(summary, *, cfg_path=CFG, session_path=SESSION, history_dir=HISTORY
     retained = groups[-retained_n:]
     archived = groups[:-retained_n]
 
-    # 细切：全局预算。从最新往回走：
-    #   tool 与带 tool_calls 的 assistant 直接丢
-    #   assistant（有正文）算 1 条 A，上限 = 倍率 × N；超出就不再收
-    #   user 无条件收，不占名额
-    # 极端情况会得到 U U … U A A … A（老的 U 留着，它们后面的 A 被预算挤掉）
+    # 细切：全局预算。A message 的判定：
+    #   - assistant 有可读正文；或
+    #   - assistant 带 tool_calls，且至少一个不是 pause 的工具（active/line/...）
+    #   - 仅 pause 且无正文 → 无效 A，连同它的 tool 回执一起丢
+    # 一个 assistant + 它附带的 tool 回执只算 1 条 A；tool 回执跟着 assistant 保留，
+    # 否则 session 会出现 tool_calls 后面没有 tool 的坏结构。
     ratio = float(session_cfg.get("retainedRatio", 4))
     max_a = int(ratio * retained_n)
     flat = [m for g in retained for m in g]
-    keep_rev, a_count = [], 0
-    for msg in reversed(flat):
+
+    def readable_assistant(msg):
+        if text_of(msg.get("content")).strip():
+            return True
+        for call in msg.get("tool_calls") or []:
+            name = str((call.get("function") or {}).get("name") or "")
+            if name and name != "pause":
+                return True
+        return False
+
+    metas = {}
+    i = 0
+    while i < len(flat):
+        msg = flat[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            ids = {str(c.get("id") or "") for c in msg["tool_calls"]}
+            j = i + 1
+            tools = []
+            while j < len(flat) and flat[j].get("role") == "tool":
+                if not ids or str(flat[j].get("tool_call_id") or "") in ids:
+                    tools.append(j)
+                j += 1
+            metas[i] = {"end": j, "tools": tools, "valid": readable_assistant(msg)}
+            i = j
+        else:
+            i += 1
+
+    valid_a = [i for i, msg in enumerate(flat)
+               if msg.get("role") == "assistant"
+               and (metas.get(i, {}).get("valid")
+                    if i in metas else bool(text_of(msg.get("content")).strip()))]
+    selected = set(sorted(valid_a)[-max_a:]) if max_a > 0 else set()
+
+    keep = []
+    i = 0
+    while i < len(flat):
+        msg = flat[i]
         role = msg.get("role")
         if role == "tool":
+            i += 1
             continue
-        if role == "assistant" and msg.get("tool_calls"):
+        if role == "assistant" and i in metas:
+            meta = metas[i]
+            if i in selected:
+                keep.append(msg)
+                keep.extend(flat[j] for j in meta["tools"])
+            i = meta["end"]
             continue
-        if role == "assistant":
-            if a_count >= max_a:
-                continue
-            keep_rev.append(msg)
-            a_count += 1
-        else:
-            keep_rev.append(msg)
-    keep_rev.reverse()
-    keep = keep_rev
+        if role == "assistant" and i in selected:
+            keep.append(msg)
+        elif role != "assistant":
+            keep.append(msg)
+        i += 1
+
     keep_ids = {id(m) for m in keep}
     dropped = [m for m in flat if id(m) not in keep_ids]
     archived_messages = [m for g in archived for m in g] + dropped
