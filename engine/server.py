@@ -165,6 +165,7 @@ def run_with_tools(payload, emit, stream_id=None):
     pending_text = ""
     last_reject = {}
     pause_called = False
+    no_speech_retries = 0
     active_seen = False
     accepted_slot = ""
 
@@ -429,6 +430,23 @@ def run_with_tools(payload, emit, stream_id=None):
         # 不能等本轮结束才从“静默”切到动作倒计时。
         publish_view()
         emit_pending()                     # 先动作，后台词
+        # 用户对话 loop 里，只有动作、没有说出口的话，不算回应。
+        # 最多补问两次，避免模型把答案永远留在 reasoning 里。
+        if (core.USER_LOOP and not spoken_line and not pending_text.strip()
+                and no_speech_retries < 2):
+            no_speech_retries += 1
+            log("reply.missing_speech", round=_round + 1)
+            payload = core.context_assemble(record=False)
+            body = dict(payload)
+            body["stream"] = False
+            body.pop("stream_options", None)
+            body["messages"] = list(body.get("messages") or []) + [{
+                "role": "user", "name": "retry",
+                "content": "（对方最后一条还没有得到回应。先正面回应他这句话；"
+                           "把说出口的话写在正文或 line 里，不要只放在思考里，"
+                           "也不要只做一个动作。）"
+            }]
+            continue
         # 每个工具各自决定“这一拍之后还要不要下一次唤醒”：
         # active(short)=否，line(final)=否，pause=否；其它工具=是。
         # 这些标记按 OR 合并：只要有一个工具要下一次唤醒，就继续；
