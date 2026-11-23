@@ -571,7 +571,7 @@ class HeaderBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(42)
+        self.setFixedHeight(58)
         self.clock = QLabel("◷ --:--", self)
         self.clock.setObjectName("clock")
         self.clock.setMinimumWidth(118)
@@ -648,12 +648,12 @@ class ChatPage(QWidget):
         head.setSpacing(8)
         self.info = QLabel("", self.header)
         self.info.setObjectName("info")
+        self.info.setWordWrap(True)
+        self.info.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.info.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         _text_shadow(self.info)
-        self.info.move(4, 12)
-        self.info.raise_()
-        head.addStretch(1)
+        head.addWidget(self.info, 1)
         head.addWidget(self.header.clock)
-        head.addStretch(1)
         shell_box.addWidget(self.header)
 
         self.scroll = QScrollArea()
@@ -793,8 +793,10 @@ class ChatPage(QWidget):
         if not isinstance(view, dict):
             return
         st = view.get("state") or {}
-        self.info.setText(f"角色位置：{st.get('location') or '未知'}　　"
-                          f"状态：{st.get('status') or '醒着'}")
+        location = st.get("location") or "未知"
+        status = st.get("status") or "醒着"
+        self.info.setText(f"角色位置：{location}\n状态：{status}")
+        self.info.setToolTip(f"角色位置：{location}\n状态：{status}")
         usage = (view.get("usage") or {}).get("text")
         if usage:
             self.usage.setText(str(usage))
@@ -1137,7 +1139,9 @@ class ChatPage(QWidget):
             self._silence_at = float(self._last_message_at) + self._idle_minutes * 60
         pos = (s.get("local") or "未知").split("/")[-1]
         state_txt = "睡着" if s.get("active") == "sleep" else "醒着"
-        self.info.setText(f"角色位置：{pos}　　状态：{state_txt}")
+        loc = s.get("local") or "未知"
+        self.info.setText(f"角色位置：{loc}\n状态：{state_txt}")
+        self.info.setToolTip(f"角色位置：{loc}\n状态：{state_txt}")
         m = s.get("metabolism") or {}
         lines = [f"位置　{s.get('local') or '未知'}",
                  f"状态　{'睡着' if s.get('active') == 'sleep' else '醒着'}",
