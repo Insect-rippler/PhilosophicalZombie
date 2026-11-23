@@ -383,7 +383,7 @@ def _text_shadow(widget):
 class Bubble(QFrame):
     """一条消息。透明容器；正文按段落拆成白底子容器。"""
 
-    def __init__(self, role, text, media=None, ts="", split=True):
+    def __init__(self, role, text, media=None, ts="", split=True, agent_name=""):
         super().__init__()
         self.role = role
         self.bodies = []
@@ -430,7 +430,8 @@ class Bubble(QFrame):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(6)
-        name = QLabel({"user": "你", "assistant": "薇薇安娜"}.get(role, role))
+        display_name = agent_name or ({"user": "你", "assistant": "无名者"}.get(role, role))
+        name = QLabel(display_name)
         name.setObjectName("muted")
         top.addWidget(name)
         stamp = QLabel(str(ts)[-8:-3] if ts else "")
@@ -696,6 +697,7 @@ class ChatPage(QWidget):
         self.panel = StatePanel(self)
         self.panel.hide()
         self._last_message_at = 0
+        self.agent_name = "无名者"
         self._timer_targets = []
         self._silence_at = 0
         self._idle_enabled = True
@@ -1040,6 +1042,7 @@ class ChatPage(QWidget):
     def refresh_state(self):
         if not hasattr(self, "panel"):
             return
+        self.agent_name = "无名者"
         try:
             s = api_get("/state")
         except Exception as e:               # noqa: BLE001
@@ -1056,6 +1059,9 @@ class ChatPage(QWidget):
                 self._timer_targets.append((at, "动作", str(t.get("text") or "动作")))
         try:
             cfg = api_get("/config") or {}
+            configured = str(((cfg.get("harness") or {}).get("name") or "")).strip()
+            if configured:
+                self.agent_name = configured
             node = ((cfg.get("harness") or {}).get("idle")) or {}
             self._idle_enabled = bool(node.get("enabled", True))
             self._idle_minutes = max(1.0, float(node.get("afterMinutes", 30)))
@@ -1112,7 +1118,8 @@ class ChatPage(QWidget):
         for index, part in enumerate(parts):
             bubble = Bubble(role, part, media if index == 0 else None,
                             ts if index == 0 else "",
-                            split=SPLIT_MESSAGES if split is None else split)
+                            split=SPLIT_MESSAGES if split is None else split,
+                            agent_name=getattr(self, "agent_name", "无名者"))
             self.messages.insertWidget(self.messages.count() - 1, bubble)
             self._fit_width(bubble)
         bar = self.scroll.verticalScrollBar()
