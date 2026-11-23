@@ -889,6 +889,10 @@ def kick_maintenance():
                     backup.snapshot("maintain")
                 except Exception:            # noqa: BLE001
                     pass
+            try:
+                _drain_queued_turns()
+            except Exception:                # noqa: BLE001
+                pass
             log("maintain.done", ok=result.get("ok"), reason=str(result.get("reason") or "")[:60])
         except Exception as exc:           # noqa: BLE001
             log("maintain.failed", error=f"{type(exc).__name__}: {exc}"[:120])
@@ -942,6 +946,10 @@ def _run_job(name):
             import maintain
             with LOCK:
                 result = maintain.run()
+            try:
+                _drain_queued_turns()
+            except Exception:                # noqa: BLE001
+                pass
         else:
             result = {"ok": False, "detail": "未知任务"}
     except Exception as exc:                 # noqa: BLE001
@@ -1482,6 +1490,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:                # noqa: BLE001
                 pass
             view = publish_view()
+        try:
+            _drain_queued_turns()
+        except Exception:                    # noqa: BLE001
+            pass
         return self._json({"rev": view.get("rev"), "view": view})
 
     def _turn(self, data):
