@@ -194,7 +194,6 @@ def run_with_tools(payload, emit, stream_id=None):
         line_final = False
         line_default = False
         other_wake = False                   # 每条 message 重新计数，不是每轮 loop 累计
-        sleep_accepted = False
         strategy = "sleep" if sleeping() else "active"
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
@@ -456,8 +455,6 @@ def run_with_tools(payload, emit, stream_id=None):
                            "也不要只做一个动作。）"
             }]
             continue
-        if sleep_accepted:
-            break
         # 每个工具各自决定“这一拍之后还要不要下一次唤醒”：
         # active(short)=否，line(final)=否，pause=否；其它工具=是。
         # 这些标记按 OR 合并：只要有一个工具要下一次唤醒，就继续；
