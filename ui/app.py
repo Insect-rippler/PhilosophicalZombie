@@ -750,6 +750,7 @@ class ChatPage(QWidget):
         self.agent_name = "无名者"
         self.user_name = "无名者"
         self._locked = False
+        self._rendered_sig = None
         self._timer_targets = []
         self._silence_at = 0
         self._idle_enabled = True
@@ -819,7 +820,64 @@ class ChatPage(QWidget):
                                  "text": pending, "ts": ""})
             elif pending:
                 self._pending_user = None
+        sig = self._message_signature(messages)
+        if sig == self._rendered_sig:
+            return
+        old = self._rendered_sig
+        if (old is not None and len(sig) > len(old)
+                and sig[:len(old)] == old):
+            self._append_view_messages(messages[len(old):])
+            self._rendered_sig = sig
+            return
         self._render_view_messages(messages)
+
+    def _message_signature(self, messages):
+        out = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            kind = str(msg.get("kind") or "")
+            if kind == "tip":
+                items = tuple((str(x.get("name") or ""), str(x.get("text") or ""))
+                              for x in (msg.get("items") or []) if isinstance(x, dict))
+                out.append((kind, items))
+            else:
+                out.append((kind, str(msg.get("text") or "")))
+        return tuple(out)
+
+    def _append_view_messages(self, messages):
+        group = None
+        last = self.messages.itemAt(self.messages.count() - 2)
+        if last is not None and isinstance(last.widget(), TipGroup):
+            group = last.widget()
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            kind = str(msg.get("kind") or "")
+            ts = str(msg.get("ts") or "")
+            if kind == "tip":
+                if group is None:
+                    group = TipGroup()
+                    self.messages.insertWidget(self.messages.count() - 1, group)
+                for item in msg.get("items") or []:
+                    if isinstance(item, dict):
+                        group.add(str(item.get("text") or ""))
+                continue
+            group = None
+            text = str(msg.get("text") or "")
+            if not text:
+                continue
+            if kind in ("scene", "action", "narration"):
+                self.add_bubble("narration", text, ts=ts)
+            elif kind == "line":
+                self.add_bubble("assistant", text, ts=ts)
+            elif kind in ("user", "assistant"):
+                self.add_bubble(kind, text, ts=ts)
+        if group is not None:
+            group.collapse()
+        from PySide6.QtCore import QTimer
+        for delay in (0, 50, 200):
+            QTimer.singleShot(delay, self._settle)
 
     def _on_stream(self, payload):
         if not isinstance(payload, dict):
@@ -915,6 +973,7 @@ class ChatPage(QWidget):
                 self.add_bubble(kind, text, ts=ts)
         if group is not None:
             group.collapse()
+        self._rendered_sig = self._message_signature(messages)
         from PySide6.QtCore import QTimer
         for delay in (0, 50, 200):
             QTimer.singleShot(delay, self._settle)
