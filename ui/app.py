@@ -383,7 +383,7 @@ def _text_shadow(widget):
 class Bubble(QFrame):
     """一条消息。透明容器；正文按段落拆成白底子容器。"""
 
-    def __init__(self, role, text, media=None, ts="", split=True, agent_name=""):
+    def __init__(self, role, text, media=None, ts="", split=True, agent_name="", user_name=""):
         super().__init__()
         self.role = role
         self.bodies = []
@@ -430,7 +430,12 @@ class Bubble(QFrame):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(6)
-        display_name = agent_name or ({"user": "你", "assistant": "无名者"}.get(role, role))
+        if role == "user":
+            display_name = user_name or "无名者"
+        elif role == "assistant":
+            display_name = agent_name or "无名者"
+        else:
+            display_name = role
         name = QLabel(display_name)
         name.setObjectName("muted")
         top.addWidget(name)
@@ -495,7 +500,8 @@ class TipGroup(QFrame):
         layout.addWidget(self.body)
 
         self.count = 0
-        self.expanded = True
+        self.expanded = False
+        self.body.hide()
         self.set_header()
 
     def set_header(self):
@@ -698,6 +704,7 @@ class ChatPage(QWidget):
         self.panel.hide()
         self._last_message_at = 0
         self.agent_name = "无名者"
+        self.user_name = "无名者"
         self._timer_targets = []
         self._silence_at = 0
         self._idle_enabled = True
@@ -1043,6 +1050,7 @@ class ChatPage(QWidget):
         if not hasattr(self, "panel"):
             return
         self.agent_name = "无名者"
+        self.user_name = "无名者"
         try:
             s = api_get("/state")
         except Exception as e:               # noqa: BLE001
@@ -1062,6 +1070,9 @@ class ChatPage(QWidget):
             configured = str(((cfg.get("harness") or {}).get("name") or "")).strip()
             if configured:
                 self.agent_name = configured
+            configured_user = str(((cfg.get("payload") or {}).get("user_id") or "")).strip()
+            if configured_user:
+                self.user_name = configured_user
             node = ((cfg.get("harness") or {}).get("idle")) or {}
             self._idle_enabled = bool(node.get("enabled", True))
             self._idle_minutes = max(1.0, float(node.get("afterMinutes", 30)))
@@ -1119,8 +1130,10 @@ class ChatPage(QWidget):
             bubble = Bubble(role, part, media if index == 0 else None,
                             ts if index == 0 else "",
                             split=SPLIT_MESSAGES if split is None else split,
-                            agent_name=getattr(self, "agent_name", "无名者"))
+                            agent_name=getattr(self, "agent_name", "无名者"),
+                            user_name=getattr(self, "user_name", "无名者"))
             self.messages.insertWidget(self.messages.count() - 1, bubble)
+            self.messages.setAlignment(bubble, Qt.AlignRight if role == "user" else Qt.AlignLeft)
             self._fit_width(bubble)
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
@@ -1246,7 +1259,6 @@ class ChatPage(QWidget):
             self._tip_group = TipGroup()
             self.messages.insertWidget(self.messages.count() - 1, self._tip_group)
         self._tip_group.add(text)
-        self._tip_group.body.show()
 
     def _on_delta(self, text):
         self._buffer = getattr(self, "_buffer", "") + text

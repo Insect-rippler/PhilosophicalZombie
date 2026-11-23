@@ -387,7 +387,7 @@ def run_with_tools(payload, emit, stream_id=None):
             kind, label = describe_tool(name, args, output)
             if name == "active":
                 emit("tool", {"kind": "action", "name": name, "text": label})   # 2 动作
-            elif name != "line":
+            elif name not in ("line", "pause"):
                 emit("tool", {"kind": kind, "name": name, "text": label})
             if name == "line":
                 try:
@@ -533,6 +533,8 @@ def session_history(limit=40, with_total=False):
                     if said:
                         rows.append({"role": "line", "text": said,
                                      "ts": item.get("ts") or ""})
+                elif name == "pause":
+                    continue
                 elif name:
                     rows.append({"role": "tip", "text": name})
             if not text:
