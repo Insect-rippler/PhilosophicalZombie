@@ -922,9 +922,9 @@ def build_blocks(search_text, skills_data, record=True):
             "<voice_check>\n"
             "这一拍是同一个瞬间。先读 state：现在几点、在哪、槽位、手里是什么、刚刚发生。\n"
             "active 改变什么？scene 是同一地点、同一时间吗？天色、日头、光线和 state 一致吗？\n"
-            "line/正文是在说话或写打算，还是在重复 active？有没有整段照搬？\n"
+            "line/正文是在说话，还是在重复 active？有没有整段照搬？\n"
             "plan 和这一拍冲突吗？改 plan，还是改写这一拍？\n"
-            "谁在说、对谁说？没有对话对象时，用她的口吻转述下一步打算。\n"
+            "谁在说、对谁说？没有对话对象时，只有真的开口才写台词；不要用正文写下一步打算。\n"
             "有没有把常识当条件讲？\n"
             "short 还在跑、没话说：pause。\n"
             "</voice_check>"
@@ -1019,7 +1019,7 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
         MESSAGES.append({"role": "user", "name": "opening", "content":
             "<opening>\n这是她记忆的开端：之前没有对话，也没有归档的往事。\n"
             "现在轮到她自己的时间。动作、环境、动作时的台词都走工具通道"
-            "（active / line）；正文写她说出口的话，没有对话对象时写下一步打算，不要写动作与场景。\n</opening>"})
+            "（active / line）；正文只写她说出口的话；没有话说就不写，要做事走 active，要记方向走 plan，不要写动作与场景。\n</opening>"})
 
     if not USER_LOOP and not (user_message and user_message.get("content")):
         # 只有自主回合才写；工具轮 USER_LOOP=True，不能标成自主 loop
