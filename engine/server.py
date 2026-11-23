@@ -187,7 +187,9 @@ def run_with_tools(payload, emit, stream_id=None):
     for _round in range(rounds):
         active_seen = False
         active_background = False
-        line_final = False                   # 每条 message 重新计数，不是每轮 loop 累计
+        line_final = False
+        line_default = False
+        other_wake = False                   # 每条 message 重新计数，不是每轮 loop 累计
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
 
@@ -352,8 +354,9 @@ def run_with_tools(payload, emit, stream_id=None):
 
             output = tools.execute_tool_call(call, registry)
             runlog.log("tool.done", name=name, out=len(str(output)))
-            if name == "pause" and not tool_failed(output):
-                pause_called = True
+            if name == "pause":
+                if tool_failed(output):
+                    other_wake = True
             if name == "active" and tool_failed(output):
                 try:
                     last_reject = {"args": json.loads(args), "call_id": call.get("id")}
@@ -397,14 +400,25 @@ def run_with_tools(payload, emit, stream_id=None):
                     emit("tool", {"kind": "line", "name": "line", "text": said2})
                     if la.get("final") is True or str(la.get("final")).lower() in ("true", "1"):
                         line_final = True
-            if name == "active" and not tool_failed(output):
-                try:
-                    _a = json.loads(args) if isinstance(args, str) else {}
-                except json.JSONDecodeError:
-                    _a = {}
-                accepted_slot = next((k for k in ("short", "long", "event")
-                                      if str(_a.get(k) or "").strip()), "")
-                active_background = (accepted_slot == "short")
+                    else:
+                        line_default = True
+                else:
+                    line_default = True
+            if name == "active":
+                if not tool_failed(output):
+                    try:
+                        _a = json.loads(args) if isinstance(args, str) else {}
+                    except json.JSONDecodeError:
+                        _a = {}
+                    accepted_slot = next((k for k in ("short", "long", "event")
+                                          if str(_a.get(k) or "").strip()), "")
+                    active_background = (accepted_slot == "short")
+                    if accepted_slot != "short":
+                        other_wake = True
+                else:
+                    other_wake = True
+            if name not in ("active", "line", "pause"):
+                other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
 
@@ -412,14 +426,11 @@ def run_with_tools(payload, emit, stream_id=None):
         # 不能等本轮结束才从“静默”切到动作倒计时。
         publish_view()
         emit_pending()                     # 先动作，后台词
-        if line_final and len(calls) == 1:
-            # 单独一条 final line：像单独 short 一样收口，不触发下一次唤醒。
-            break
-        if pause_called:
-            break
-        if active_background and len(calls) == 1:
-            # 只有「单独一个 short」受理后才结束本轮；
-            # short + line / map / plan 等由其它工具继续 loop。
+        # 每个工具各自决定“这一拍之后还要不要下一次唤醒”：
+        # active(short)=否，line(final)=否，pause=否；其它工具=是。
+        # 这些标记按 OR 合并：只要有一个工具要下一次唤醒，就继续；
+        # 全部都不需要，才结束本轮。
+        if not (line_default or other_wake):
             break
         payload = core.context_assemble(record=False)     # 工具轮不重复记召回
         body = dict(payload)

@@ -689,7 +689,7 @@
     "type": "function",
     "function": {
       "name": "line",
-      "description": "说出台词。默认不结束这一轮；final=true 时，单独一条 line 会像 short 一样收口，不再触发下一次唤醒。",
+      "description": "说出台词。默认这一句之后还要下一次唤醒；final=true 时这一句本身不需要下一次唤醒，但同条其它需要唤醒的工具仍会继续。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -699,7 +699,7 @@
           },
           "final": {
             "type": "boolean",
-            "description": "true = 这一句说完就收口，不再触发下一次唤醒；同条还有其它工具时，仍按其它工具唤醒。"
+            "description": "true = 这一句本身不需要下一次唤醒；同条若还有其它需要唤醒的工具（map/plan/long 等），仍会继续。"
           }
         },
         "required": [
@@ -712,7 +712,7 @@
     "type": "function",
     "function": {
       "name": "pause",
-      "description": "short 还在跑、这一拍没有别的事：暂停本轮，不推进时间。只在 short 槽非空时受理；short 空时不要用它代替结束。",
+      "description": "short 还在跑、这一拍没有别的事：pause 本身不需要下一次唤醒。只在 short 槽非空时受理；同条若有其它需要唤醒的工具仍会继续。",
       "parameters": {
         "type": "object",
         "properties": {}
