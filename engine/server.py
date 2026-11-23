@@ -1001,10 +1001,6 @@ def idle_tick():
     runlog.log("turn.begin", kind="idle")
     kick_maintenance()
     timers.tick_lock()
-    try:
-        body.observe()            # 先把对方这一轮做的事结算掉
-    except Exception as exc:      # noqa: BLE001
-        log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
     core.USER_LOOP = False
     payload = core.context_assemble()
     stream_id = f"idle-{int(_tt.time() * 1000)}"

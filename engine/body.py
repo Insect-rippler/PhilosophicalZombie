@@ -337,7 +337,7 @@ def observe():
     if not last_user:
         return None
     body_text = str(last_user.get("content") or "")
-    stamp = f"{len(rows)}:{hash(body_text) & 0xffff:x}"
+    stamp = f"{last_user.get('ts') or ''}:{hash(body_text) & 0xffff:x}"
     ch = timers.load_character()
     state = ch.setdefault("state", {})
     if stamp and state.get("lastObserved") == stamp:
