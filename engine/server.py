@@ -408,6 +408,9 @@ def run_with_tools(payload, emit, stream_id=None):
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
 
+        # 工具执行后立即推送视图：short 的计时器要马上出现在前端，
+        # 不能等本轮结束才从“静默”切到动作倒计时。
+        publish_view()
         emit_pending()                     # 先动作，后台词
         if line_final and len(calls) == 1:
             # 单独一条 final line：像单独 short 一样收口，不触发下一次唤醒。
