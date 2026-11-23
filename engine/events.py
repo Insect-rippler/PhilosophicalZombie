@@ -113,10 +113,15 @@ def _context():
     state = "\n".join(timers.render_state(ch))
     recent = body.recent_context(10)
     plans = []
+    events = []
     data = _read(AGENDA, {})
     for goal in data.get("goal") or []:
-        if isinstance(goal, dict) and goal.get("status") in ("active", "paused"):
+        if not isinstance(goal, dict):
+            continue
+        if goal.get("status") in ("active", "paused"):
             plans.append(f"[{goal.get('kind') or 'self'}] {goal.get('objective')}")
+        if goal.get("kind") == "event":
+            events.append(str(goal.get("objective") or "").strip())
     return {
         "state": state,
         "recent": recent,
@@ -126,6 +131,7 @@ def _context():
         "temperature": env.get("temperatureC"),
         "season": env.get("season"),
         "plans": plans,
+        "events": events[-8:],
     }
 
 
@@ -142,14 +148,18 @@ def _generate():
         "\"limitSeconds\":900~86400, "
         "\"reward\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0,\"items\":[\"剧情物品\"]}, "
         "\"penalty\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0}}。\n"
-        "奖励惩罚只用变化量；不要写数值上限、不要写下一步指令；事件必须现在就能发生。"
+        "奖励惩罚只用变化量；不要写数值上限、不要写下一步指令；事件必须现在就能发生。\n"
+        "最近 24 小时已经出现过的事件，绝对不要复用其触发方式、核心意象、道具或解决方式；"
+        "不要只换地点、换措辞。必须换一种完全不同的触发和冲突。"
     )
     user = (
         f"## 当前状态\n{ctx['state']}\n\n"
         f"## 最近言行\n{ctx['recent'] or '（无）'}\n\n"
         f"## 地点与风险\n{ctx['local']}（风险 {ctx['risk']}）\n\n"
         f"## 环境\n{weather}\n\n"
-        "## 已有计划（不要重复）\n" + ("\n".join(ctx["plans"]) or "（无）")
+        "## 已有计划（不要重复）\n" + ("\n".join(ctx["plans"]) or "（无）") +
+        "\n\n## 最近事件（这些类型、意象、道具都不要重复）\n" +
+        ("\n".join(f"- {x}" for x in ctx["events"]) or "（无）")
     )
     body = {
         "model": core.payload.get("model"),
