@@ -1375,12 +1375,15 @@ class ChatPage(QWidget):
     def _above_stream(self, role, text):
         """把一条气泡插在流式正文上方（按到达顺序向上堆叠）。"""
         import time as _t
-        bubble = Bubble(role, text, None, _t.strftime("%Y-%m-%d %H:%M:%S"))
+        bubble = Bubble(role, text, None, _t.strftime("%Y-%m-%d %H:%M:%S"),
+                        agent_name=getattr(self, "agent_name", "无名者"),
+                        user_name=getattr(self, "user_name", "无名者"))
         stream = getattr(self, "_stream_bubble", None)
         at = self.messages.indexOf(stream) if stream is not None else -1
         if at < 0:
             at = self.messages.count() - 1
         self.messages.insertWidget(at, bubble)
+        self.messages.setAlignment(bubble, Qt.AlignRight if role == "user" else Qt.AlignLeft)
         self._fit_width(bubble)
         if getattr(self, "_follow", True):
             bar = self.scroll.verticalScrollBar()
