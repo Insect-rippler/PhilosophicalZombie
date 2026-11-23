@@ -9,6 +9,7 @@
 """
 
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -475,6 +476,39 @@ class Bubble(QFrame):
                 layout.addWidget(picture)
 
 
+class LockOverlay(QWidget):
+    """输入区忙碌遮罩：两道交叉锁链，禁止输入。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setCursor(Qt.ForbiddenCursor)
+        self.setToolTip("后端正在运行，稍等")
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor(8, 7, 6, 138))
+        w, h = self.width(), self.height()
+        pen = QPen(QColor(228, 198, 137, 235), 4.0, Qt.SolidLine, Qt.RoundCap)
+        p.setPen(pen)
+        for x1, y1, x2, y2 in ((0, 0, w, h), (w, 0, 0, h)):
+            p.drawLine(x1, y1, x2, y2)
+            length = math.hypot(x2 - x1, y2 - y1)
+            steps = max(1, int(length // 22))
+            for i in range(1, steps):
+                t = i / steps
+                cx, cy = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+                p.setBrush(QColor(8, 7, 6, 220))
+                p.drawEllipse(QPoint(int(cx), int(cy)), 5, 3)
+        p.setPen(QPen(QColor(244, 234, 214, 245), 1))
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPointSizeF(max(9.0, font.pointSizeF() + 0.5))
+        p.setFont(font)
+        p.drawText(self.rect(), Qt.AlignCenter, "运行中")
+
+
 class TipGroup(QFrame):
     """一轮里的工具调用。调用中逐条显示，结束后折叠成一行。"""
 
@@ -638,6 +672,7 @@ class ChatPage(QWidget):
         shell_box.addWidget(self.scroll, 1)
 
         input_shell = QFrame()
+        self.input_shell = input_shell
         input_shell.setObjectName("inputShell")
         input_row = QHBoxLayout(input_shell)
         input_row.setContentsMargins(10, 2, 6, 2)
@@ -646,11 +681,15 @@ class ChatPage(QWidget):
         self.input.setPlaceholderText("说点什么…")
         self.input.returnPressed.connect(self.send)
         send_btn = QPushButton("发送")
+        self.send_btn = send_btn
         send_btn.setCursor(Qt.PointingHandCursor)
         send_btn.clicked.connect(self.send)
         input_row.addWidget(self.input, 1)
         input_row.addWidget(send_btn)
         shell_box.addWidget(input_shell)
+        self.lock_overlay = LockOverlay(input_shell)
+        self.lock_overlay.setGeometry(input_shell.rect())
+        self.lock_overlay.hide()
 
         usage_bar = QFrame()
         usage_bar.setObjectName("usageBar")
@@ -705,6 +744,7 @@ class ChatPage(QWidget):
         self._last_message_at = 0
         self.agent_name = "无名者"
         self.user_name = "无名者"
+        self._locked = False
         self._timer_targets = []
         self._silence_at = 0
         self._idle_enabled = True
@@ -754,6 +794,7 @@ class ChatPage(QWidget):
         if usage:
             self.usage.setText(str(usage))
         self._apply_timer(view.get("timer"))
+        self.set_locked(bool(view.get("busy")))
         if not force and (self._stream_active
                           or (self.worker and self.worker.isRunning())):
             return
@@ -803,6 +844,7 @@ class ChatPage(QWidget):
 
     def _on_stream_error(self, message):
         self._stream_active = False
+        self.set_locked(False)
         self.add_bubble("narration", f"[连接出错] {message}")
         self.refresh_view()
 
@@ -907,6 +949,8 @@ class ChatPage(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.panel.setGeometry(0, 0, 230, self.height())
+        if hasattr(self, "lock_overlay") and hasattr(self, "input_shell"):
+            self.lock_overlay.setGeometry(self.input_shell.rect())
         self._fit_all()
 
     def _poll_history(self):
@@ -1138,7 +1182,20 @@ class ChatPage(QWidget):
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def set_locked(self, locked, reason="运行中"):
+        self._locked = bool(locked)
+        self.input.setEnabled(not self._locked)
+        self.send_btn.setEnabled(not self._locked)
+        if hasattr(self, "lock_overlay"):
+            self.lock_overlay.setGeometry(self.input_shell.rect())
+            self.lock_overlay.setVisible(self._locked)
+            if self._locked:
+                self.lock_overlay.raise_()
+        self.input.setPlaceholderText("正在运行…" if self._locked else "说点什么…")
+
     def send(self):
+        if getattr(self, "_locked", False):
+            return
         text = self.input.text().strip()
         if not text:
             return
@@ -1146,16 +1203,19 @@ class ChatPage(QWidget):
         self._follow = True
         # 乐观显示；后端 view 到达前由 _pending_user 兜住
         self._pending_user = {"text": text}
+        self.set_locked(True)
         self.add_bubble("user", text)
         self.scroll_to_bottom()
         try:
             data = api_send("POST", "/turn", {"text": text})
         except Exception as exc:              # noqa: BLE001
             self._pending_user = None
+            self.set_locked(False)
             self.add_bubble("narration", f"[发送失败] {type(exc).__name__}: {exc}")
             return
         if isinstance(data, dict) and data.get("error"):
             self._pending_user = None
+            self.set_locked(False)
             self.add_bubble("narration", f"[发送失败] {data['error']}")
 
     def _fit_width(self, bubble):

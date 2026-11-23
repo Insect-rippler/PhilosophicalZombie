@@ -45,6 +45,7 @@ PORT = 8765
 TICK_SECONDS = 60          # 1 tick = 1 分钟
 HOST = "127.0.0.1"
 LOCK = threading.Lock()          # 一轮对话独占，避免两轮同时改 session
+TURN_BUSY = False                # 模型请求/工具循环进行中
 
 
 # ---------------- 对话 ----------------
@@ -963,6 +964,9 @@ def start_job(name):
 def idle_tick():
     """醒来走一轮。调用者负责判断该不该醒。睡着时不醒。"""
     import time as _tt
+    global TURN_BUSY
+    TURN_BUSY = True
+    publish_view()
     _t0 = _tt.time()
     runlog.log("turn.begin", kind="idle")
     kick_maintenance()
@@ -992,6 +996,8 @@ def idle_tick():
         reply = ""
     runlog.log("turn.end", kind="idle", ms=int((_tt.time()-_t0)*1000),
                reply=len(reply), chunks=len(chunks))
+    TURN_BUSY = False
+    publish_view()
     return 1 if reply else 0
 
 
@@ -1159,6 +1165,7 @@ def build_view():
     return {
         "rev": VIEW_REV,
         "serverNow": time.time(),
+        "busy": bool(TURN_BUSY),
         "messages": _view_messages(),
         "timer": _timer_view(),
         "state": {
@@ -1403,6 +1410,8 @@ class Handler(BaseHTTPRequestHandler):
         if not LOCK.acquire(blocking=False):
             return self._json({"error": "上一轮还没结束"}, 409)
         try:
+            global TURN_BUSY
+            TURN_BUSY = True
             core.append_session([{"role": "user",
                                   "name": core.payload.get("user_id", ""),
                                   "content": text}])
@@ -1415,6 +1424,7 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=self._run_turn_locked, args=(text,),
                              daemon=True).start()
         except Exception as exc:              # noqa: BLE001
+            TURN_BUSY = False
             LOCK.release()
             return self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
         return self._json({"ok": True, "accepted": True}, 202)
@@ -1442,7 +1452,9 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             publish_error(f"{type(exc).__name__}: {exc}")
         finally:
+            global TURN_BUSY
             core.USER_LOOP = False
+            TURN_BUSY = False
             publish_view()
             try:
                 LOCK.release()
@@ -1489,6 +1501,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def idle_loop():
     import time as _time
+    global TURN_BUSY
     while True:
         _time.sleep(TICK_SECONDS)
         if not LOCK.acquire(blocking=False):
@@ -1513,6 +1526,12 @@ def idle_loop():
             import traceback
             traceback.print_exc()
         finally:
+            if TURN_BUSY:
+                TURN_BUSY = False
+                try:
+                    publish_view()
+                except Exception:            # noqa: BLE001
+                    pass
             LOCK.release()
 
 
