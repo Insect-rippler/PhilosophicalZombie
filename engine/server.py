@@ -1158,6 +1158,12 @@ def _view_messages():
 
 def build_view():
     """主会话的完整只读视图；前端只渲染这个对象。"""
+    try:
+        cfg = core.loadConfig()
+        agent_name = str(((cfg.get("harness") or {}).get("name") or "")).strip()
+        user_name = str(((cfg.get("payload") or {}).get("user_id") or "")).strip()
+    except Exception:                        # noqa: BLE001
+        agent_name = user_name = ""
     ch = timers.load_character()
     state = ch.get("state") or {}
     metab = ch.get("metabolism") or {}
@@ -1166,6 +1172,8 @@ def build_view():
         "rev": VIEW_REV,
         "serverNow": time.time(),
         "busy": bool(TURN_BUSY),
+        "agentName": agent_name,
+        "userName": user_name,
         "messages": _view_messages(),
         "timer": _timer_view(),
         "state": {

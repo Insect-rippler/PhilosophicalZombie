@@ -438,6 +438,7 @@ class Bubble(QFrame):
         else:
             display_name = role
         name = QLabel(display_name)
+        self.name_label = name
         name.setObjectName("muted")
         top.addWidget(name)
         stamp = QLabel(str(ts)[-8:-3] if ts else "")
@@ -611,6 +612,10 @@ class ChatPage(QWidget):
         self._clock_timer.setInterval(1000)
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start()
+        self._identity_timer = _QT(self)
+        self._identity_timer.setInterval(2000)
+        self._identity_timer.timeout.connect(self._refresh_identity)
+        self._identity_timer.start()
 
         self._view_worker = ViewWorker(self)
         self._view_worker.view.connect(self._on_view)
@@ -793,6 +798,11 @@ class ChatPage(QWidget):
         usage = (view.get("usage") or {}).get("text")
         if usage:
             self.usage.setText(str(usage))
+        if "agentName" in view:
+            self.agent_name = str(view.get("agentName") or "").strip() or "无名者"
+        if "userName" in view:
+            self.user_name = str(view.get("userName") or "").strip() or "无名者"
+        self._update_bubble_names()
         self._apply_timer(view.get("timer"))
         self.set_locked(bool(view.get("busy")))
         if not force and (self._stream_active
@@ -1117,6 +1127,7 @@ class ChatPage(QWidget):
             configured_user = str(((cfg.get("payload") or {}).get("user_id") or "")).strip()
             if configured_user:
                 self.user_name = configured_user
+            self._update_bubble_names()
             node = ((cfg.get("harness") or {}).get("idle")) or {}
             self._idle_enabled = bool(node.get("enabled", True))
             self._idle_minutes = max(1.0, float(node.get("afterMinutes", 30)))
@@ -1181,6 +1192,28 @@ class ChatPage(QWidget):
             self._fit_width(bubble)
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def _refresh_identity(self):
+        try:
+            cfg = api_get("/config") or {}
+        except Exception:                    # noqa: BLE001
+            return
+        agent = str(((cfg.get("harness") or {}).get("name") or "")).strip() or "无名者"
+        user = str(((cfg.get("payload") or {}).get("user_id") or "")).strip() or "无名者"
+        if agent != self.agent_name or user != self.user_name:
+            self.agent_name = agent
+            self.user_name = user
+            self._update_bubble_names()
+
+    def _update_bubble_names(self):
+        for i in range(self.messages.count()):
+            item = self.messages.itemAt(i).widget()
+            if not isinstance(item, Bubble):
+                continue
+            if item.role == "user":
+                item.name_label.setText(self.user_name or "无名者")
+            elif item.role == "assistant":
+                item.name_label.setText(self.agent_name or "无名者")
 
     def set_locked(self, locked, reason="运行中"):
         self._locked = bool(locked)
