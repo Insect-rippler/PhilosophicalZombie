@@ -723,7 +723,7 @@
     "type": "function",
     "function": {
       "name": "sleep",
-      "description": "切换为睡眠状态。第一次调用只回确认（预计睡多久、几点醒）；5 分钟内再调一次才入睡。醒来由生理或闹钟决定。",
+      "description": "切换为睡眠状态。第一次只回预计睡多久、几点醒；5分钟内再调一次直接入睡。入睡后本轮不再唤醒，醒来由 alarm 或身体决定。",
       "parameters": {
         "type": "object",
         "properties": {}

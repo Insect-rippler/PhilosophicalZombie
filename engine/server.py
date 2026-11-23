@@ -368,6 +368,8 @@ def run_with_tools(payload, emit, stream_id=None):
                     pass
             # 被代码拒绝的动作不画，但「话」照说——她张嘴了，只是事情没做成
             if tool_failed(output):
+                if name == "sleep":
+                    other_wake = True
                 try:
                     attempted = json.loads(args)
                 except (TypeError, ValueError):
@@ -421,7 +423,7 @@ def run_with_tools(payload, emit, stream_id=None):
                         other_wake = True
                 else:
                     other_wake = True
-            if name not in ("active", "line", "pause"):
+            if name not in ("active", "line", "pause", "sleep"):
                 other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})

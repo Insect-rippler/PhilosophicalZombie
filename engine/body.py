@@ -674,6 +674,20 @@ def submit(description, slot="short", *, location="", line="", force=False,
             "ok": True}
 
 
+def _sleep_threshold():
+    """犯困段的起点；从 metabolism.json 动态读取，不用旧常量。"""
+    try:
+        return float(timers.band_start("sleepiness", "犯困", 70.0))
+    except Exception:                        # noqa: BLE001
+        return 70.0
+
+
+def _sleep_forced_level(sleepy):
+    """睡觉预期/入睡时使用的困意：低于阈值抬到阈值，已在阈值以上拉满。"""
+    threshold = _sleep_threshold()
+    return 100.0 if float(sleepy) >= threshold else threshold
+
+
 def commit(description, slot="short", *, ch=None, force=False, sleep=None,
            line=None, location=None, emotion_break=False, end=""):
     """判定 + 建计时器，返回给主代理的回执。
@@ -777,31 +791,26 @@ def commit(description, slot="short", *, ch=None, force=False, sleep=None,
         asked = state.get("sleepAskedAt")
         if asked and now - float(asked) <= 300 and not force:
             state.pop("sleepAskedAt", None)
+            metab = ch.setdefault("metabolism", {})
+            metab["sleepiness"] = round(
+                _sleep_forced_level(float(metab.get("sleepiness") or 0)), 2)
             timers._write(timers.CHARACTER, ch)
             timers.set_sleeping(True)
             return {"已执行": "睡眠请求已受理，即将入睡。",
                     "ok": True}
         metab = ch.get("metabolism") or {}
         sleepy = float(metab.get("sleepiness") or 0)
-        fatigue_now = float(metab.get("fatigue") or 0)
-        satiety_now = float(metab.get("satiety") or 0)
         health = float(metab.get("health") or 100)
-        expect_h = max(0.5, (sleepy - timers.SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health) / 200.0)
-        wake_ts = now + expect_h * 3600
-        wake_at = time.strftime("%H:%M:%S", time.localtime(wake_ts))
-        wake_sleepy = max(0.0, sleepy - 7.0 * expect_h)
-        wake_fatigue = max(0.0, fatigue_now - 7.0 * expect_h)
-        wake_satiety = max(0.0, satiety_now - 1.5 * expect_h)
-        sleepy_name, sleepy_say = timers.stage_of("sleepiness", wake_sleepy)
-        fatigue_name, fatigue_say = timers.stage_of("fatigue", wake_fatigue)
-        satiety_name, _ = timers.stage_of("satiety", wake_satiety)
+        expected_level = _sleep_forced_level(sleepy)
+        expect_h = max(0.5, (expected_level - timers.SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health) / 200.0)
+        duration_sec = int(round(expect_h * 3600))
+        wake_ts = now + duration_sec
+        wake_at = time.strftime("%H:%M", time.localtime(wake_ts))
         state["sleepAskedAt"] = now
         timers._write(timers.CHARACTER, ch)
-        return {"未执行": (f"要睡下吗？按现在的困意，预计睡 {expect_h:.1f} 小时，"
-                          f"{wake_at} 左右自己醒。醒来时大约：困意 {wake_sleepy:.0f}（{sleepy_name}）、"
-                          f"疲惫 {wake_fatigue:.0f}（{fatigue_name}）、饱食 {wake_satiety:.0f}（{satiety_name}）。"
-                          f"如果半夜反复醒或睡眠不足，这些都会更差。确认要睡，5 分钟内再调一次 sleep；"
-                          f"不睡就到此为止。"),
+        return {"未执行": (f"当前状态下预计会睡 {duration_sec} 秒，即 {wake_at} 时醒来。"
+                          f"该预期符合你的计划可以在5min内再递交一次sleep，会直接受理入睡；"
+                          f"否则可以设定alarm后再决定睡觉或者不睡觉换别的事情做。"),
                 "ok": False}
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
