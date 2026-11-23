@@ -400,7 +400,7 @@ class Bubble(QFrame):
         if role == "narration":
             label = QLabel(text)
             label.setWordWrap(True)
-            label.setAlignment(Qt.AlignCenter)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             label.setObjectName("narration")
             font = label.font()
             font.setItalic(True)
@@ -413,9 +413,7 @@ class Bubble(QFrame):
             _text_shadow(label)
             layout.setContentsMargins(0, 2, 0, 2)
             row = QHBoxLayout()
-            row.addStretch(1)
             row.addWidget(label)
-            row.addStretch(1)
             layout.addLayout(row)
             return
 
