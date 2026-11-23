@@ -1190,7 +1190,7 @@ def _timer_view():
                 "id": f"{kind}:{t.get('id') or int(at * 1000)}",
                 "kind": kind, "label": label, "endsAt": at,
                 "remainingMs": max(0, int(round((at - now) * 1000))),
-                "graceMs": 3000,   # 覆盖触发 /sync 到后端解析请求的 2~3 秒
+                "graceMs": 15000,  # 覆盖唤醒请求和工具轮；实测最长约 11 秒
             }))
     if not sleeping and last_activity_at():
         enabled, minutes = idle_settings()
@@ -1201,7 +1201,7 @@ def _timer_view():
                     "id": "silence", "kind": "silence", "label": "静默",
                     "endsAt": at,
                     "remainingMs": max(0, int(round((at - now) * 1000))),
-                    "graceMs": 3000,   # 覆盖触发 /sync 到后端解析请求的 2~3 秒
+                    "graceMs": 15000,  # 覆盖唤醒请求和工具轮；实测最长约 11 秒
                 }))
     if not cands:
         return None
