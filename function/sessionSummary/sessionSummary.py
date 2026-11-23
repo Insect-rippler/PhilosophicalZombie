@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "engine"))
 DATA = Path(os.environ.get("PZ_DATA") or (ROOT / "state"))
 CFG = DATA / "Philosophical.json"
 SESSION = DATA / "session" / "session.jsonl"
@@ -214,7 +215,19 @@ def compress(summary, *, cfg_path=CFG, session_path=SESSION, history_dir=HISTORY
         fresh = [t for t in texts
                  if hashlib.sha1(t.strip().encode("utf-8")).hexdigest() not in existing]
         if fresh:
-            added = len(memory_store.add(fresh, kind="slice"))
+            added_ids = memory_store.add(fresh, kind="slice")
+            added = len(added_ids)
+            try:
+                import score
+                lib = memory_store.lib()
+                by_id = {it.get("id"): it for it in lib.items}
+                new_items = [by_id[i] for i in added_ids if i in by_id]
+                if new_items:
+                    score.score_slices(new_items)
+                    lib._save()
+            except Exception as e:           # noqa: BLE001
+                print(f"[warn] slice scoring failed: {type(e).__name__}: {e}",
+                      file=sys.stderr)
 
     # 2) 归档原文
     month = time.strftime("%Y-%m")

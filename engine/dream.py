@@ -183,6 +183,20 @@ STAGE1_SYSTEM = """你在整理一个角色的记忆。
 def stage1(top=0, dry_run=False):
     lib = core.memory_lib()
     items = [it for it in lib.items if it.get("kind") == "slice"]
+    # 切片入库时没打分的旧数据，先补分；新切片通常在 compress 时已经打好。
+    try:
+        import score
+        pending_slices = [it for it in items if not it.get("importance")]
+        pending_blocks = [it for it in lib.items
+                          if it.get("kind") == "block" and not it.get("importance")]
+        if pending_slices:
+            score.score_slices(pending_slices)
+        if pending_blocks:
+            score.score_slices(pending_blocks)
+        if pending_slices or pending_blocks:
+            lib._save()
+    except Exception as e:                   # noqa: BLE001
+        log({"stage": 1, "score_warn": f"{type(e).__name__}: {e}"})
     if top:
         items.sort(key=lambda it: int(it.get("recalled_chars", 0)), reverse=True)
         candidates = items[:top]
@@ -200,6 +214,7 @@ def stage1(top=0, dry_run=False):
     answer = call_model(STAGE1_SYSTEM, "\n\n".join(materials))
     blocks = (answer or {}).get("blocks") or []
     written = 0
+    new_block_ids = []
     if not dry_run and blocks:
         ids = [it["id"] for it in candidates]
         for b in blocks:
@@ -217,9 +232,22 @@ def stage1(top=0, dry_run=False):
                 # 没有来源的块无法追溯，也过不了阶段二；直接不入库
                 log({"stage": 1, "skip": "无来源", "text": text[:50]})
                 continue
-            lib.add(text, kind="block", tag=(b.get("tag") or "").strip() or None, sources=refs)
+            new_block_ids.extend(
+                lib.add(text, kind="block", tag=(b.get("tag") or "").strip() or None,
+                        sources=refs))
             written += 1
 
+    if new_block_ids:
+        try:
+            import score
+            by_id = {it.get("id"): it for it in lib.items}
+            new_blocks = [by_id[i] for i in new_block_ids if i in by_id]
+            if new_blocks:
+                score.score_slices(new_blocks)
+                lib._save()
+        except Exception as e:               # noqa: BLE001
+            log({"stage": 1, "score_warn": f"{type(e).__name__}: {e}",
+                 "blocks": len(new_block_ids)})
     log({"stage": 1, "ok": True, "candidates": len(materials),
          "blocks": len(blocks), "written": written, "dry_run": dry_run,
          "titles": [b.get("tag") for b in blocks][:20]})
