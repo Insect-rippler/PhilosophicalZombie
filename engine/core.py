@@ -58,6 +58,8 @@ except Exception as e:                       # noqa: BLE001
 else:
     _lorebook_error = ""
 
+session_hooks = None
+
 try:
     from engine import timers
     from engine import events as event_hooks
@@ -687,6 +689,11 @@ def append_session(messages, path=SESSION_PATH):
         rev_path.write_text(str(rev + 1), encoding="utf-8")
     except (OSError, ValueError):
         pass
+    if session_hooks is not None:
+        try:
+            session_hooks()
+        except Exception:                    # noqa: BLE001
+            pass
     return len(messages)
 
 

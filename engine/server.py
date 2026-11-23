@@ -1221,6 +1221,10 @@ def publish_stream_done(stream_id, text):
     publish_event("done", {"id": stream_id, "text": text})
 
 
+# session 每次追加后同步刷新 view，计时器随消息一起更新。
+core.session_hooks = publish_view
+
+
 def publish_tool(payload):
     publish_event("tool", payload)
 
