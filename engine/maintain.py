@@ -97,7 +97,17 @@ def make_summary(limit=12):
     """读最近几轮，让模型写提要。失败返回 None。"""
     if not SESSION.exists():
         return None
-    lines = [l for l in SESSION.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = []
+    for line in SESSION.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get("content") or "").startswith("[INFO] session 历史提要："):
+            continue
+        lines.append(line)
     if not lines:
         return None
     recent = lines[-limit:]

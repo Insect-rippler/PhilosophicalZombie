@@ -557,7 +557,7 @@ TOOL_PATHS = {}          # {工具名: 脚本相对路径}，执行时用
 
 
 SUMMARY_TOOL = "sessionSummary"
-SUMMARY_PLACEHOLDER = "（摘要已写入 session 首条提要，此处不再重复）"
+SUMMARY_PLACEHOLDER = "（摘要已写入 session 末尾提要，此处不再重复）"
 
 
 

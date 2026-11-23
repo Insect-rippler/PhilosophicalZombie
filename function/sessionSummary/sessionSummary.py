@@ -157,10 +157,9 @@ def compress(summary, *, cfg_path=CFG, session_path=SESSION, history_dir=HISTORY
     user_name = user_name or payload.get("user_id") or "对方"
 
     messages = load_session(session_path)
-    # 上一轮压缩留下的提要：丢掉，本次用新提要替换
-    if messages and messages[0].get("role") == "system" \
-            and text_of(messages[0].get("content")).startswith(SUMMARY_PREFIX):
-        messages = messages[1:]
+    # 上一轮压缩留下的提要可能在开头，也可能在末尾；本次都用新提要替换。
+    messages = [m for m in messages
+                if not text_of(m.get("content")).startswith(SUMMARY_PREFIX)]
 
     groups = group_by_user(messages)
     if len(groups) <= retained_n:
@@ -279,12 +278,13 @@ def compress(summary, *, cfg_path=CFG, session_path=SESSION, history_dir=HISTORY
             for m in archived_messages:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 
-    # 3) 重写 session：提要 + 保留轮次
-    head = {"role": "system", "content": f"{SUMMARY_PREFIX}{summary}"}
+    # 3) 重写 session：保留轮次 + 末尾提要
+    # 提要不占用 system 通道，就是一条没有 tool_calls 的 assistant 正文。
+    tail = {"role": "assistant", "content": f"{SUMMARY_PREFIX}{summary}"}
     remaining = keep
     if not dry_run:
-        lines = [json.dumps(head, ensure_ascii=False)]
-        lines += [json.dumps(m, ensure_ascii=False) for m in remaining]
+        lines = [json.dumps(m, ensure_ascii=False) for m in remaining]
+        lines.append(json.dumps(tail, ensure_ascii=False))
         write_atomic(session_path, lines)
 
     return {
