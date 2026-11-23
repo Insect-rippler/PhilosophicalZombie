@@ -872,10 +872,12 @@ def sleeping():
 
 
 def should_wake(now=None):
-    """醒不醒：计时/事件到了必醒；静默只在醒着时算。"""
+    """醒不醒：睡着时只由生理/闹钟醒，动作回执和静默都不叫醒。"""
     import time as _t
     now = _t.time() if now is None else float(now)
-    if timers.peek_pending():                 # 计时器到期 / 事件触发
+    if sleeping():
+        return False
+    if timers.peek_pending():                 # 醒着：计时器到期 / 事件触发
         return True
     enabled, minutes = idle_settings()
     last = last_activity_at()
@@ -1602,6 +1604,10 @@ def idle_loop():
                     except Exception:            # noqa: BLE001
                         pass
 
+            try:
+                kick_maintenance()
+            except Exception:               # noqa: BLE001
+                pass
             if should_wake():
                 print("[wake]", "静默", flush=True)
                 idle_tick()
