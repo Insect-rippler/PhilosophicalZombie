@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import threading
@@ -67,7 +68,7 @@ HERE = Path(__file__).resolve().parent          # model/
 ROOT = HERE.parent                              # 项目根
 MODEL_DIR = HERE / "bge-small-zh-v1.5"          # 向量模型随代码放在 model/
 # 记忆数据属于产物，留在 ConsciousnessRealm/embedding/ 不动
-DATA_DIR = ROOT / "ConsciousnessRealm" / "embedding"
+DATA_DIR = Path(os.environ.get("PZ_EMBED_DIR") or (ROOT / "ConsciousnessRealm" / "embedding"))
 SLICES_PATH = DATA_DIR / "slices.json"          # 会话切片
 BLOCKS_PATH = DATA_DIR / "blocks.json"          # 记忆块（升格但未常驻）
 VEC_PATH = DATA_DIR / "memory_vectors.npz"      # 两级共用的向量库
@@ -151,6 +152,7 @@ class MemoryLibrary:
         self.blocks_path = Path(blocks_path)
         self.vector_path = Path(vector_path)
         self.items: list[dict] = []
+        self.searches = 0
         self.vecs: dict[str, np.ndarray] = {}
         self.hashes: dict[str, str] = {}
         self._load()
@@ -169,6 +171,8 @@ class MemoryLibrary:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise MemoryError_(f"{path.name} 不是合法 JSON：{exc}") from None
+        if isinstance(data, dict) and path.name.startswith("slices"):
+            self.searches = int(data.get("searches") or 0)
         raw = data.get("items") if isinstance(data, dict) else data
         for it in raw or []:
             if isinstance(it, dict) and str(it.get("text") or "").strip():
@@ -178,6 +182,11 @@ class MemoryLibrary:
                     "recalls": int(it.get("recalls") or 0),
                     "kind": kind,
                 }
+                for key in ("importance", "why", "recallsAt", "lastRecall",
+                            "createdAt", "created", "level", "sources",
+                            "seg_reason", "ts", "local", "searchesAtCreation"):
+                    if key in it:
+                        item[key] = it[key]
                 if kind == "block" and it.get("tag"):
                     item["tag"] = str(it["tag"])
                 self.items.append(item)
@@ -225,6 +234,8 @@ class MemoryLibrary:
             items = [{k: v for k, v in it.items() if k != "kind"}
                      for it in self.items if it["kind"] == kind]
             payload = {"model": "bge-small-zh-v1.5", "dim": DIM, "items": items}
+            if kind == "slice":
+                payload["searches"] = self.searches
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -275,11 +286,21 @@ class MemoryLibrary:
                 rows[h["id"]] = int(h.get("chars") or 0)
             else:
                 rows[h] = 0
+        import time as _t
+        self.searches = int(getattr(self, "searches", 0)) + 1
+        cooldown = 30 * 60                     # 同一段记忆 30 分钟内只算一次，留余量
+        now = _t.time()
         n = 0
         for it in self.items:
             if it["id"] in rows:
+                last = float(it.get("lastRecall") or 0)
+                if now - last < cooldown:
+                    continue
                 it["recalls"] = int(it.get("recalls", 0)) + 1
                 it["recalled_chars"] = int(it.get("recalled_chars", 0)) + rows[it["id"]]
+                it["lastRecall"] = now
+                it["opportunities"] = max(self.searches - int(it.get("searchesAtCreation") or 0), 1)
+                it.setdefault("recallsAt", []).append(now)
                 n += 1
         if n:
             self._save()

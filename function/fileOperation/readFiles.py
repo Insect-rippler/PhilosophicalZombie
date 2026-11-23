@@ -141,12 +141,12 @@ for i, P in enumerate(paths):
     if i >= maxFiles:
         pathRead = paths[:i]
         pathNotRead = paths[i:]
-        content.append(f"[info] 文件数大于maxFiles值，已中断读取。已读取；{pathRead}；未读取：{pathNotRead}")
+        content.append(f"[WARN] 文件数大于maxFiles值，已中断读取。已读取；{pathRead}；未读取：{pathNotRead}")
         break
     if TotalNumberOfCharacters >= 100000:
         pathRead = paths[:i]
         pathNotRead = paths[i:]
-        content.append(f"[info] 文件总字符数超过硬上限，已中断读取。已读取；{pathRead}；未读取：{pathNotRead}")
+        content.append(f"[WARN] 文件总字符数超过硬上限，已中断读取。已读取；{pathRead}；未读取：{pathNotRead}")
         break
     if not error:
         if candidate.is_dir():
@@ -162,18 +162,18 @@ for i, P in enumerate(paths):
                     else:
                         text = f"路径：{P}\n[INFO] {rangeInfo}无内容：文件可能不足 {lineStart} 行，或该区间为空。"
                     if truncated:
-                        text += "\n[INFO] 已达 maxCharsPerFile 上限，该区间后续行未读取。"
+                        text += "\n[WARN] 已达 maxCharsPerFile 上限，该区间后续行未读取。"
                     TotalNumberOfCharacters += len(body)
                 else:
                     text, enc, truncated = readText(candidate, limit)
                     if truncated:
                         TotalNumberOfCharacters += maxCharsPerFile
-                        text = f"路径：{P}\n正文：{text}...\n[INFO] 该文件长度超过maxCharsPerFile值，已进行截断处理。"
+                        text = f"路径：{P}\n正文：{text}...\n[WARN] 该文件长度超过maxCharsPerFile值，已进行截断处理。"
                     else:
                         TotalNumberOfCharacters += len(text)
                         text = f"路径：{P}\n正文：{text}"
                 if enc != "utf-8-sig":
-                    text += f"\n[INFO] 非 UTF-8，已按 {enc} 解码"
+                    text += f"\n[WARN] 非 UTF-8，已按 {enc} 解码"
             except FileNotFoundError:
                 text = f"[ERROR] 未找到文件：{P}"
             except PermissionError:

@@ -1,16 +1,12 @@
-"""上下文组装：把 ConsciousnessRealm 与检索结果拼成 chat/completions 的 messages。
+"""上下文组装：把识域文件与检索结果拼成 chat/completions 的 messages。
 
-顺序（权威定义见 `ConsciousnessRealm/AGENT.md`）：
+顺序：
+    <agent>（system）→ persona → character → memory → lorebook → impression → tools → skill
+    → <appearance> 图 → session → memory_momentary → lorebook_momentary → skill_knowledge
+    → state → plan → voice_check → guide → opening → [INFO] → <user> → [INFO]
 
-    persona → agent → character → memory_persistent → lorebook_persistent → user
-    → skill_proficient ‖ session ‖ memory_momentary → lorebook_momentary
-    → skill_knowledge → state → message → plan
-
-- 前六段（含 SKILL 常驻技能）拼成**一条 system 消息**，以 `# 段落名` 分隔。
-- session 之后的部分用同名闭合标签包成独立消息，模型靠标签区分"资料"与"对方的话"。
-- 顺序：session → memory_momentary → lorebook_momentary → skill_knowledge → state → plan → message。
-- 最后一条 user 消息不加标签，且永远排在最后：它是唯一要回应的内容。
-- **state / plan 暂不实现**，`state_loading()` / `plan_loading()` 固定返回空串。
+- system 里只有 AGENT.md；其余每段各一条消息，用同名闭合标签包住。
+- `<user>` 是唯一要回应的话；它前面是背景与指导，后面可能跟一条用户对话 loop 的 `[INFO]`。
 """
 
 from pathlib import Path
@@ -32,7 +28,7 @@ import time
 chat_completions_url = "https://api.deepseek.com/chat/completions"
 
 ROOT = Path(__file__).resolve().parents[1]
-REALM_ROOT = ROOT / "ConsciousnessRealm"
+REALM_ROOT = Path(os.environ.get("PZ_CARD_ROOT") or (ROOT / "ConsciousnessRealm"))
 CFG_PATH = _paths.data("Philosophical.json")
 REGISTRY = ROOT / "function" / "function.json"
 SESSION_PATH = _paths.data("session", "session.jsonl")
@@ -253,13 +249,18 @@ def search_text_make(session, user_message=None):
         if role == "assistant":
             for call in message.get("tool_calls") or []:
                 fn = call.get("function") or {}
-                if fn.get("name") != "active":
-                    continue
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     continue
-                for key in ("description", "scene"):
+                name = fn.get("name")
+                if name == "active":
+                    keys = ("short", "long", "event", "scene")
+                elif name == "line":
+                    keys = ("text",)
+                else:
+                    continue
+                for key in keys:
                     piece = str(args.get(key) or "").strip()
                     if piece:
                         texts.append(piece)
@@ -296,8 +297,8 @@ def search_text_make(session, user_message=None):
 
 
 COMPRESSION_NOTICE = (
-    "[INFO] 记忆挤得发沉，前面的话堆得太多了。\n"
-    "把手头这一段收个尾；合适的时候用 sessionSummary 工具，把旧对话收拢成一段提要。\n"
+    "[WARN] 记忆挤得发沉，前面的话堆得太多了。\n"
+    "把手头这一段收个尾；合适的时候睡一觉（sleep），让 dream 接管旧对话。\n"
     "这一轮不要开新长话题。内部指令，不向对方复述。"
 )
 
@@ -322,11 +323,6 @@ def state_loading():
                 reminder_hooks.check()       # 生理提醒：满足就必触发
             except Exception as e:           # noqa: BLE001
                 ERROR.append(f"[WARN] 生理提醒失败：{type(e).__name__}: {e}")
-        if event_hooks is not None:
-            try:
-                event_hooks.check()          # 地点事件 + 全局事件，先过条件再掷骰
-            except Exception as e:           # noqa: BLE001
-                ERROR.append(f"[WARN] 事件判定失败：{type(e).__name__}: {e}")
         pending = timers.take_pending()
         ch = timers.load_character()
     except Exception as e:                   # noqa: BLE001
@@ -379,6 +375,35 @@ def _age_text(text):
     return f"{days} 天"
 
 
+def _hms_left(deadline):
+    try:
+        target = time.mktime(time.strptime(str(deadline), "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError):
+        return "未知"
+    left = max(0, int(target - time.time()))
+    h, rem = divmod(left, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def _effect_text(effect):
+    if not isinstance(effect, dict):
+        return "无"
+    labels = {"sleepiness": "困意", "fatigue": "疲惫", "satiety": "饱食",
+              "hydration": "水分", "health": "健康", "hp": "生命",
+              "emotion": "情绪", "bodyTemperature": "体温"}
+    bits = []
+    for key, value in (effect.get("metabolism") or {}).items():
+        if isinstance(value, (int, float)) and value:
+            bits.append(f"{labels.get(key, key)}{value:+g}")
+    emo = effect.get("emotion")
+    if isinstance(emo, (int, float)) and emo:
+        bits.append(f"情绪{emo:+g}")
+    for item in effect.get("items") or []:
+        bits.append(f"物品「{item}」")
+    return "、".join(bits) or "无"
+
+
 def _render_goal(goal):
     """一个目标渲染成一段 Markdown，步骤只给当前步前后各 N 步。"""
     gid = goal.get("id", "?")
@@ -386,14 +411,31 @@ def _render_goal(goal):
     steps = [s for s in (goal.get("steps") or []) if isinstance(s, dict)]
 
     lines = []
-    head = f"- [{gid}] {objective}"
+    if goal.get("kind") == "event":
+        ev = goal.get("event") or {}
+        head = f"- [{gid}][随机事件] {objective} · 剩余 {_hms_left(ev.get('deadlineAt'))}"
+        lines.append(head)
+        if ev.get("scene"):
+            lines.append(f"  场景：{str(ev['scene'])[:200]}")
+        if ev.get("opening"):
+            lines.append(f"  开场：{str(ev['opening'])[:200]}")
+        if ev.get("condition"):
+            lines.append(f"  条件：{str(ev['condition'])[:160]}")
+        lines.append(f"  奖励：{_effect_text(ev.get('reward'))}")
+        lines.append(f"  失败：{_effect_text(ev.get('penalty'))}")
+        return "\n".join(lines)
+
+    head = f"- [{gid}][自定] {objective}"
     age = _age_text(goal.get("createdAt"))
     if steps:
-        cur = next((i for i, st in enumerate(steps) if st.get("status") == "doing"), None)
+        cur = next((i for i, st in enumerate(steps)
+                    if st.get("status") == "doing" and st.get("status") != "dropped"), None)
         if cur is None:
-            cur = next((i for i, st in enumerate(steps) if st.get("status") == "pending"), None)
+            cur = next((i for i, st in enumerate(steps)
+                        if st.get("status") == "pending"), None)
         if cur is None:
-            cur = len(steps) - 1
+            alive = [i for i, st in enumerate(steps) if st.get("status") != "dropped"]
+            cur = alive[-1] if alive else 0
         head += f" · 第 {cur + 1}/{len(steps)} 步"
     if age:
         head += f"（立了 {age}）"
@@ -408,7 +450,9 @@ def _render_goal(goal):
         st = steps[i]
         title = st.get("title", "").strip()
         evidence = st.get("evidence", "").strip()
-        if i == cur:
+        if st.get("status") == "dropped":
+            marker = "已放弃："
+        elif i == cur:
             marker = "当前："
         elif i < cur:
             marker = "上一步："
@@ -471,9 +515,9 @@ def plan_loading():
         sections.append("## 搁置\n" + "\n".join(lines))
 
     if not sections:
+        if not active and not paused:
+            return "<plan>\n目前没有进行中的计划。\n</plan>"
         return ""
-    if not active and not paused:
-        sections.insert(0, "目前没有进行中的计划。")
     return "<plan>\n" + "\n\n".join(sections) + "\n</plan>"
 
 
@@ -520,6 +564,85 @@ SUMMARY_PLACEHOLDER = "（摘要已写入 session 首条提要，此处不再重
 
 
 
+def session_rev(path=None):
+    path = Path(path or SESSION_PATH)
+    rev_path = path.parent / "rev.txt"
+    try:
+        return int(rev_path.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _receipt_ok(content):
+    try:
+        data = json.loads(content)
+    except (TypeError, ValueError):
+        return True
+    if isinstance(data, dict):
+        return data.get("ok") is not False and "未执行" not in data
+    return True
+
+
+def project_session(rows, tail=None):
+    """投影：只保留前端能渲染的部分。"""
+    receipts = {}
+    for row in rows:
+        if row.get("role") == "tool":
+            receipts[str(row.get("tool_call_id") or "")] = row.get("content")
+    out = []
+    for row in rows:
+        role = row.get("role")
+        if role == "user":
+            out.append({"role": "user", "name": row.get("name") or "",
+                        "content": str(row.get("content") or ""),
+                        "ts": row.get("ts")})
+        elif role == "assistant":
+            kept = []
+            for call in row.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                content = receipts.get(str(call.get("id") or ""))
+                if content is None:
+                    continue
+                if not _receipt_ok(content):
+                    continue
+                kept.append({"name": fn.get("name") or "",
+                             "arguments": fn.get("arguments") or "{}"})
+            text = str(row.get("content") or "")
+            if not text.strip() and not kept:
+                continue
+            out.append({"role": "assistant", "content": text,
+                        "tool_calls": kept, "ts": row.get("ts")})
+    if tail:
+        out = out[-int(tail):]
+    return out
+
+
+def read_snapshot(tail=None, since=None):
+    """读取快照并投影；行不完整时等 1 秒重读，最多 3 次。"""
+    path = Path(SESSION_PATH)
+    rows = []
+    for _attempt in range(3):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            return session_rev(), []
+        lines = [x for x in raw.splitlines() if x.strip()]
+        rows = []
+        broken = False
+        for line in lines:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                broken = True
+        if not broken:
+            break
+        time.sleep(1)
+    rev = session_rev()
+    if since is not None and int(since) == rev:
+        return rev, None
+    return rev, project_session(rows, tail=tail)
+
+
 def append_session(messages, path=SESSION_PATH):
     """追加写入 session.jsonl。每行一条消息，只追加不重写。"""
     if not messages:
@@ -527,16 +650,43 @@ def append_session(messages, path=SESSION_PATH):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        import timers as _timers
+        ch_now = _timers.load_character()
+        local = str(ch_now.get("local") or "")
+        sleeping = str((ch_now.get("state") or {}).get("active") or "") == "sleep"
+        now = time.time()
+        actions = [f"{t.get('slotId') or t.get('slot') or '?'}:"
+                   f"{str(t.get('semantic') or t.get('text') or '').strip()}"
+                   for t in _timers.load_timers()
+                   if float(t.get("at") or 0) > now]
+    except Exception:                       # noqa: BLE001
+        local, actions = "", []
     with open(path, "a", encoding="utf-8") as f:
         for m in messages:
+            extra = {}
             if "ts" not in m:
-                m = {**m, "ts": stamp}
+                extra["ts"] = stamp
+            if local and "local" not in m:
+                extra["local"] = local
+            if actions and "actions" not in m:
+                extra["actions"] = actions
+            if sleeping and "sleep" not in m:
+                extra["sleep"] = True
+            if extra:
+                m = {**m, **extra}
             f.write(json.dumps(m, ensure_ascii=False) + "\n")
     if event_hooks is not None:
         try:
             event_hooks.note_message()       # 静默时长从最后一条消息算
         except Exception:                    # noqa: BLE001
             pass
+    try:
+        rev_path = path.parent / "rev.txt"
+        rev = int(rev_path.read_text(encoding="utf-8").strip() or 0) if rev_path.exists() else 0
+        rev_path.write_text(str(rev + 1), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
     return len(messages)
 
 
@@ -568,6 +718,13 @@ def appearance_message():
 INTERRUPTED = "[ERROR] 这次工具执行被服务重启或超时中断，未完成；不要当作成功。"
 
 
+CONTEXT_TAGS = ("<agent>", "<persona>", "<character>", "<memory>", "<lorebook>",
+                "<impression>", "<skill>", "<tools>", "<appearance>",
+                "<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
+                "<state>", "<plan>", "<voice_check>", "<guide>", "<opening>",
+                "<user>", "<assistant>")
+
+
 def repair_messages(messages):
     """修复会话结构：给缺失回执的工具调用补一条中断回执，丢掉孤立回执。
 
@@ -575,8 +732,7 @@ def repair_messages(messages):
     所以发送前和启动时都要过一遍。
     """
     fixed, changed = [], False
-    tags = ("<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
-            "<state>", "<plan>", "<user>", "<assistant>", "<impression>")
+    tags = CONTEXT_TAGS
     index = 0
     while index < len(messages):
         msg = messages[index]
@@ -622,6 +778,21 @@ def repair_messages(messages):
     return cleaned, changed
 
 
+INFO_ECHO = re.compile(r"\s*\[INFO\] 当前(?:处于用户对话loop中|是自主 loop).*$", re.S)
+
+
+def strip_info_echo(messages):
+    """模型偶尔会把收尾提示抄进正文，读的时候切掉。"""
+    out = []
+    for m in messages or []:
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+            cleaned = INFO_ECHO.sub("", m["content"]).rstrip()
+            if cleaned != m["content"]:
+                m = dict(m, content=cleaned)
+        out.append(m)
+    return out
+
+
 def sanitize_tool_pairs(messages):
     """发送前清洗：只摘掉没有回执的 tool_calls，不改文件。"""
     out, _ = repair_messages(messages)
@@ -652,21 +823,53 @@ def repair_session(path=None):
     return len(fixed) - len(rows)
 
 
-def build_system(skills_data):
-    """六个 system 段落 + 常驻技能，拼成一条消息。"""
-    parts = []
-    for filename in SYSTEM_BLOCKS:
+BACKGROUND = [
+    ("PERSONA", "persona"),
+    ("CHARACTER", "character"),
+    ("MEMORY", "memory"),
+    ("LOREBOOK", "lorebook"),
+    ("USER", "impression"),
+]
+
+
+def _tagged(tag, content):
+    return f"<{tag}>\n{content.strip()}\n</{tag}>"
+
+
+def build_system():
+    """system 里只剩 agent 规则；其余固定段各自一条消息。"""
+    item_path = REALM_ROOT / "AGENT.md"
+    if not item_path.exists():
+        item_path = ROOT / "ConsciousnessRealm" / "AGENT.md"
+    try:
+        content = increase_heading_level(item_path.read_text(encoding="utf-8")).strip()
+    except OSError as e:
+        ERROR.append(f"[ERROR] 系统文件不存在：{item_path}（{e}）")
+        content = ""
+    return {"role": "system", "content": _tagged("agent", content)}
+
+
+def build_background(skills_data):
+    """常驻背景：每条消息一个标签，顺序写死。"""
+    messages = []
+    for filename, tag in BACKGROUND:
+        if filename == "USER" and os.environ.get("PZ_HIDE_USER") == "1":
+            continue
         item_path = REALM_ROOT / f"{filename}.md"
         if not item_path.exists():
             ERROR.append(f"[ERROR] 系统文件不存在：{item_path}")
             continue
-        content = increase_heading_level(item_path.read_text(encoding="utf-8")).strip()
+        import realm
+        content = realm.render(filename, realm.load(item_path, filename)).strip()
         if not content:
             continue
-        if filename == "USER":
-            parts.append(f"<impression>\n\n{content}\n\n</impression>")
-        else:
-            parts.append(f"# {filename}\n\n{content}")
+        messages.append({"role": "user", "name": tag, "content": _tagged(tag, content)})
+
+    messages.append({"role": "user", "name": "tools", "content": _tagged(
+        "tools",
+        "动作只能通过 active 递交：short / long / event + seconds；scene 是它的参数。"
+        "正文里不要出现 <active>、short=、seconds= 这类调用格式——写成文字会被判成旁白，"
+        "也可能被系统捡回成一次调用，都不能替代真正的调用。")})
 
     constant = [s for s in skills_data
                 if s.get("constant") and s.get("title") and s.get("content")]
@@ -675,9 +878,9 @@ def build_system(skills_data):
         body = "\n\n".join(
             f"## {s['title']}\n\n{increase_heading_level(s['content'])}" for s in constant
         )
-        parts.append(f"# SKILL\n\n{body}")
-
-    return {"role": "system", "content": "\n\n".join(parts)}
+        messages.append({"role": "user", "name": "skill",
+                         "content": _tagged("skill", body)})
+    return messages
 
 
 def clean_payload(body):
@@ -708,10 +911,44 @@ def build_blocks(search_text, skills_data, record=True):
         ("skill", recall.skill_recall(skills_data, search_text)),
         ("state", state_loading()),
         ("plan", plan_loading()),
+        ("voice_check", (
+            "<voice_check>\n"
+            "这一拍是同一个瞬间。先读 state：现在几点、在哪、槽位、手里是什么、刚刚发生。\n"
+            "active 改变什么？scene 是同一地点、同一时间吗？天色、日头、光线和 state 一致吗？\n"
+            "line/正文是在说话或写打算，还是在重复 active？有没有整段照搬？\n"
+            "plan 和这一拍冲突吗？改 plan，还是改写这一拍？\n"
+            "谁在说、对谁说？没有对话对象时，用她的口吻转述下一步打算。\n"
+            "有没有把常识当条件讲？\n"
+            "short 还在跑、没话说：pause。\n"
+            "</voice_check>"
+        )),
     ):
         if block:
             blocks.append({"role": "user", "name": name, "content": block})
     return blocks
+
+
+_LATENCIES = __import__("collections").deque(maxlen=12)
+
+
+def record_latency(seconds):
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return
+    if 0 < value < 300:
+        _LATENCIES.append(value)
+
+
+def latency_ahead():
+    """按最近几次调用估一个保守的补偿时间（秒）。"""
+    import statistics
+    data = list(_LATENCIES)
+    if len(data) < 3:
+        return 3.0
+    mean = statistics.mean(data)
+    std = statistics.pstdev(data) if len(data) > 1 else 0.0
+    return max(1.0, min(30.0, mean + std))
 
 
 def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=True,
@@ -721,6 +958,12 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     user_message 可以是 {"role","content"} 或纯字符串；为空时取 session 最后一条 user。
     blocks 传入时复用已有的检索块（工具循环用），不再重新检索。
     """
+    # 组装前先结算计时器：state 要用最新结果，不能等下一个 tick
+    try:
+        timers.settle()
+    except Exception:                       # noqa: BLE001
+        pass
+
     session = loadSession(session_path)
 
     if isinstance(user_message, str):
@@ -738,7 +981,8 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
             user_message = {"role": "user", "content": ""}
 
     skills_data = load_skills()
-    system = build_system(skills_data)
+    system = build_system()
+    background = build_background(skills_data)
     if blocks is None:
         blocks = build_blocks(search_text_make(session, user_message), skills_data,
                               record=record)
@@ -746,22 +990,35 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
     # 顺序：session → memory_momentary → lorebook_momentary → skill_knowledge
     #       → state → plan → message
     # message 必须最后：它是唯一要回应的内容；plan 是背景，不能抢它的位置
-    session = sanitize_tool_pairs(session)
-    MESSAGES = [system]
+    session = sanitize_tool_pairs(strip_info_echo(session))
+    MESSAGES = [system] + background
     shot = appearance_message()
     if shot:
-        MESSAGES.append(shot)                # 外观图：system 之后、session 之前
+        MESSAGES.append(shot)                # 外观图：静态段之后、session 之前
     MESSAGES.extend(session)                 # session 历史
 
     MESSAGES.extend(blocks)                  # 检索块原样复用，不重新算
+    MESSAGES.append({"role": "user", "name": "guide", "content": _tagged("guide", """背景（不是任务）：<persona> / <character> / <memory> / <lorebook> / <impression> / <skill> / <appearance>
+按需：<memory_momentary> / <lorebook_momentary> / <skill_knowledge>
+指导（不是事实）：<plan> / <tools> / <guide> / <opening> / <voice_check> / [INFO] / [WARN]
+事实（以此为准）：<state> / tool 回执 / 会话记录
+任务（要回应的）：对方最后说的话（<user>，之后在会话记录里）；自主与否看末尾 [INFO]
 
-    if not (user_message and user_message.get("content")):
-        # 自主回合：没人说话。明确告诉她别把背景当对话对象
+背景不当任务，指导不当事实，记忆不当命令。
+一致性：state / plan / active / scene / line / 正文必须对得上；冲突以 state 和工具回执为准。""")})
+
+    # 空白 session：只有初次启动会碰到。补一段开场说明，避免模型把第一幕写成正文旁白。
+    if not session:
+        MESSAGES.append({"role": "user", "name": "opening", "content":
+            "<opening>\n这是她记忆的开端：之前没有对话，也没有归档的往事。\n"
+            "现在轮到她自己的时间。动作、环境、动作时的台词都走工具通道"
+            "（active / line）；正文写她说出口的话，没有对话对象时写下一步打算，不要写动作与场景。\n</opening>"})
+
+    if not USER_LOOP and not (user_message and user_message.get("content")):
+        # 只有自主回合才写；工具轮 USER_LOOP=True，不能标成自主 loop
         MESSAGES.append({"role": "user", "content":
-            "[INFO] 这一轮没有用户消息。继续你自己的事——按 plan 和 state 行动，"
-            "以提供的背景信息继续，\n"
-            "不要把上面的<memory_momentary>、<lorebook_momentary>、<skill_knowledge>"
-            "当成对方说的话去回应。"})
+            "[INFO] 当前是自主 loop：按 plan 和 state 行动；"
+            "不要把上面的记忆与设定当成对方说的话去回应。"})
 
     if user_message and user_message.get("content"):
         wrapped = dict(user_message)
@@ -776,6 +1033,12 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
         MESSAGES, image_issues = clean_images(MESSAGES, api)
         for issue in image_issues:
             ERROR.append(f"[WARN] 图片上传失败 {issue}")
+
+    if USER_LOOP:
+        MESSAGES.append({"role": "user", "name": "INFO", "content":
+            "[INFO] 当前处于用户对话loop中，请优先回应用户消息，若最新的用户消息已被回应"
+            "则可以结束本次loop或者继续调用工具推进演绎。注意用户无法在本次loop中发送任何消息，"
+            "需要用户回答时请优先结束本次loop。"})
 
     registry = _tools.load_registry()
     tools = _tools.build_tools(registry)
@@ -802,6 +1065,7 @@ COMPRESSION_THRESHOLD = int(
 
 
 
+USER_LOOP = False
 LAST_PROMPT_TOKENS = 0     # 上一次请求的实际 prompt_tokens，压缩提示用
 
 

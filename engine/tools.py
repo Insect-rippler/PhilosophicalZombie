@@ -4,6 +4,7 @@ function.json 就是官方 tools 格式；路径表决定脚本，实现表决�
 """
 
 import json
+import os
 import runlog
 import subprocess
 import sys
@@ -57,9 +58,28 @@ def tool_entry(name):
     return None
 
 
+def allowed_tools():
+    """读 harness.tools 的白/黑名单：有白名单读白名单，否则读黑名单，都没有就全放。"""
+    try:
+        cfg = (core.harness.get("tools") or {})
+        allow = [str(x) for x in (cfg.get("allow") or []) if str(x).strip()]
+        deny = [str(x) for x in (cfg.get("deny") or []) if str(x).strip()]
+    except Exception:                      # noqa: BLE001
+        return None
+    if allow:
+        return lambda name: name in allow
+    if deny:
+        return lambda name: name not in deny
+    return None
+
+
 def build_tools(registry):
-    """去掉本地 path 字段，剩下的就是能直接发给 API 的列表。"""
-    return [{k: v for k, v in item.items() if k != "path"} for item in registry]
+    """去掉本地 path 字段与名单外的工具，剩下的就是能直接发给 API 的列表。"""
+    keep = allowed_tools()
+    items = [{k: v for k, v in item.items() if k != "path"} for item in registry]
+    if keep is None:
+        return items
+    return [it for it in items if keep((it.get("function") or {}).get("name") or "")]
 
 
 def virtual_fight(raw_args):
@@ -159,13 +179,14 @@ def virtual_alarm(raw_args):
         args = raw_args or {}
     seconds = float(args.get("seconds") or 0)
     if seconds <= 0:
-        return {"ok": False, "未执行": "闹钟没设：seconds 必须大于 0。"}
+        return json.dumps({"ok": False, "未执行": "闹钟没设：seconds 必须大于 0。"},
+                          ensure_ascii=False)
     seconds = min(seconds, 12 * 3600)
     note = str(args.get("note") or "").strip()
     # 闹钟只留一个：新的到了，旧的作废
     keep = [e for e in timers.load_timers() if not e.get("alarm")]
     timers.save_timers(keep)
-    timers.add(kind="alarm", text=note or "闹钟响了，她醒了过来。",
+    timers.add(kind="alarm", text=note or "闹钟", note=note,
                minutes=seconds / 60.0, semantic="闹钟",
                slot="alarm", source="alarm")
     ent = timers.load_timers()
@@ -175,11 +196,73 @@ def virtual_alarm(raw_args):
     timers.save_timers(ent)
     ends = _t.strftime("%H:%M", _t.localtime(_t.time() + seconds))
     left = (f"{int(seconds)} 秒" if seconds < 60 else f"{int(seconds // 60)} 分钟")
-    return {"已执行": f"闹钟已设：{ends}（约 {left}后）。", "ok": True}
+    return json.dumps({"已执行": f"闹钟已设：{ends}（约 {left}后）。", "ok": True},
+                      ensure_ascii=False)
+
+
+def virtual_map(raw_args):
+    """地图查询与维护。日常只开放 query/create/link；dream 才开放全量。"""
+    try:
+        import engine.worldmap as worldmap
+    except Exception as e:                   # noqa: BLE001
+        return json.dumps({"ok": False, "reason": f"地图不可用：{type(e).__name__}"},
+                          ensure_ascii=False)
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+    except json.JSONDecodeError:
+        return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
+    action = str(args.get("action") or "").strip().lower()
+    if not action:
+        return json.dumps({"ok": False, "reason": "action 必填：query / create / link"}, ensure_ascii=False)
+    dream = os.environ.get("PZ_DREAM") == "1"
+    if action in ("unlink", "set_risk", "delete", "merge") and not dream:
+        return json.dumps({"ok": False, "reason": "unlink / set_risk / delete / merge 只在 dream 里开放"}, ensure_ascii=False)
+    op = {"action": action, "target": args.get("target"),
+          "risk": args.get("risk"), "link": args.get("link"),
+          "time": args.get("time")}
+    result = worldmap.apply_op(op, dream=dream)
+    return json.dumps(result, ensure_ascii=False)
+
+
+def virtual_sleep(raw_args):
+    """切换睡眠状态：交给 body 的睡眠确认与生理逻辑。"""
+    try:
+        import engine.body as body
+    except Exception as e:                   # noqa: BLE001
+        return json.dumps({"ok": False, "reason": f"body 不可用：{type(e).__name__}"},
+                          ensure_ascii=False)
+    receipt = body.commit("我躺下睡了", "long", sleep=True)
+    return json.dumps(receipt, ensure_ascii=False)
+
+
+def virtual_pause(raw_args):
+    """short 还在跑时，明确停在这一拍；不推进时间，不新建计时器。"""
+    try:
+        import time as _t
+        timers.settle()
+        now = _t.time()
+        running = [e for e in timers.load_timers()
+                   if str(e.get("slotId") or e.get("slot") or "") == "short"
+                   and float(e.get("at") or 0) > now]
+        if not running:
+            return json.dumps({"ok": False,
+                               "未执行": "short 槽是空的，不能暂停；直接结束本轮。"},
+                              ensure_ascii=False)
+        return json.dumps({"ok": True,
+                           "已暂停": "这一拍停在这里；short 到点后会叫你。"},
+                          ensure_ascii=False)
+    except Exception as e:                   # noqa: BLE001
+        return json.dumps({"ok": False, "未执行": f"暂停失败：{type(e).__name__}"},
+                          ensure_ascii=False)
+
+
+VIRTUAL_HANDLERS["sleep"] = virtual_sleep
+VIRTUAL_HANDLERS["map"] = virtual_map
+VIRTUAL_HANDLERS["pause"] = virtual_pause
 
 
 def virtual_active(raw_args):
-    """主代理声明一个持续动作：交给 body 判定并挂计时器。"""
+    """主代理递交一个 short 动作：先受理，判定交给 body 后台。"""
     try:
         import engine.body as body
     except Exception as e:                   # noqa: BLE001
@@ -190,19 +273,64 @@ def virtual_active(raw_args):
     except json.JSONDecodeError:
         return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
 
-    description = str(args.get("description") or "").strip()
+    slot = next((k for k in ("short", "long", "event")
+                 if str(args.get(k) or "").strip()), "")
+    description = str(args.get(slot) or "").strip() if slot else ""
     if not description:
-        return json.dumps({"ok": False, "reason": "缺少 description"}, ensure_ascii=False)
-    declared = str(args.get("slot") or "").strip().lower()
-    slot = declared if declared in ("short", "long", "event") else "auto"
-    force = bool(args.get("force"))
-
-    receipt = body.commit(description, slot, force=force, appeal=args.get("appeal"),
-                          sleep=args.get("sleep"), line=args.get("line"),
-                          location=args.get("location"),
-                          emotion_break=bool(args.get("emotion_break")))
+        return json.dumps({"ok": False, "reason": "short / long / event 里要有一个动作。"},
+                          ensure_ascii=False)
+    seconds = args.get("seconds")
+    if not isinstance(seconds, (int, float)) or int(seconds) <= 0:
+        return json.dumps({"ok": False, "reason": "seconds 必填：按这一步字面估整秒数。"},
+                          ensure_ascii=False)
+    if slot == "short" and int(seconds) > 120:
+        return json.dumps({"ok": False, "reason":
+                           "short 只装短动作，最长 2 分钟；更长的事用 long 或 event。"
+                           "赶路拆成多段 short，最后一段再写到达地点。"},
+                          ensure_ascii=False)
+    location = str(args.get("location") or "").strip()
+    ch_now = timers.load_character()
+    current = str(ch_now.get("local") or "").strip()
+    if not location:
+        if slot == "short":
+            location = current
+        else:
+            return json.dumps({"ok": False, "reason":
+                               f"{slot} 必须带 location：到点时她应该处在的位置。"
+                               "补上 location 后重新递交。"}, ensure_ascii=False)
+    move_note = ""
+    if slot == "short" and location:
+        import engine.worldmap as worldmap
+        worldmap.ensure_current(current, 0)
+        if location != current:
+            if not worldmap.node_exists(location):
+                return json.dumps({"ok": False, "reason":
+                                   f"地图没有 {location}。先用 map(action=query, target=关键词) "
+                                   "确认是不是已有节点；确实没有再用 "
+                                   f"map(action=create, target={location}, risk=0~3, time=秒) 建点，"
+                                   "建好后再递交同一条 short。"}, ensure_ascii=False)
+            edge = worldmap.edge_seconds(current, location)
+            if edge is None:
+                route = worldmap.routes(current, location)
+                hint = "；".join(" → ".join(r["path"]) for r in route.get("routes") or []) or "无路线"
+                return json.dumps({"ok": False, "reason":
+                                   f"地图有 {location}，但与当前 {current} 不直接相连。"
+                                   f"先用 map(action=query, target={location}) 看路线，按路线逐段走。"
+                                   f"当前可用路线：{hint}"}, ensure_ascii=False)
+            if int(seconds) != edge:
+                delta = abs(int(seconds) - edge) / max(1, edge)
+                if delta > 0.2:
+                    move_note = f" 地图记为 {edge} 秒，本次按地图用时受理。"
+                    seconds = edge
+                else:
+                    move_note = f" 地图记为 {edge} 秒，按你填的 {int(seconds)} 秒受理。"
+    receipt = body.submit(description, slot, force=bool(args.get("force")),
+                          line=args.get("line"), location=location,
+                          seconds=int(seconds or 0), end=args.get("end") or "")
+    if move_note and receipt.get("ok"):
+        receipt["已执行"] = str(receipt.get("已执行") or "") + move_note
     if not receipt.get("ok") and receipt.get("degraded"):
-        core.ERROR.append(f"[WARN] body 判定失败：{receipt.get('reason')}")
+        core.ERROR.append(f"[WARN] body 受理失败：{receipt.get('reason') or ''}")
     return json.dumps(receipt, ensure_ascii=False)
 
 
@@ -220,7 +348,10 @@ def execute_tool_call(call, registry):
 
     handler = VIRTUAL_HANDLERS.get(name)
     if handler is not None:
-        return handler(raw_args)
+        result = handler(raw_args)
+        if isinstance(result, str):
+            return result
+        return json.dumps(result, ensure_ascii=False)
 
     path = TOOL_PATHS.get(name)
     if not path:
@@ -300,5 +431,39 @@ def tool_turn_messages(response, registry):
                  "tool_calls": strip_summary_args(calls)}   # 再按占位符落盘
     return [assistant] + results
 
+def virtual_emotion(raw_args):
+    """情绪突破：break=true 才翻标记；reason 记进 state 与日志。"""
+    import timers
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+    except json.JSONDecodeError:
+        args = {}
+    if not args.get("break"):
+        return json.dumps({"ok": False, "未执行": "没有越过：break 不是 true。"},
+                          ensure_ascii=False)
+    ch = timers.load_character()
+    st = ch.setdefault("state", {})
+    st["emotionBreakPending"] = True
+    reason = str(args.get("reason") or "").strip()
+    if reason:
+        st["emotionBreakReason"] = reason[:120]
+    timers.save_character(ch)
+    return json.dumps({"已执行": "情绪越过了边界。"}, ensure_ascii=False)
+
+
+def virtual_line(raw_args):
+    """只是说话：内容由 server 落成台词事件。"""
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+    except json.JSONDecodeError:
+        args = {}
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return json.dumps({"ok": False, "原因": "缺少 text"}, ensure_ascii=False)
+    return json.dumps({"ok": True}, ensure_ascii=False)
+
+
 VIRTUAL_HANDLERS.update({"active": virtual_active, "fight": virtual_fight,
-                         "alarm": virtual_alarm})
+                         "alarm": virtual_alarm,
+                         "emotion": virtual_emotion,
+                         "line": virtual_line})

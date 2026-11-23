@@ -1,7 +1,7 @@
 """PhilosophicalZombie 桌面端骨架（PySide6）。
 
-三页：对话 / 配置 / 识域。平面化视觉——灰白底、单色强调、细线分隔，
-不用渐变和阴影。
+主会话 / 通信设备 / 识域 / 技能 / 设置。1440×900 基准，
+背景图铺满整页；按钮透明无边框，容器透明底 + 细边框。
 
     python ui/app.py
 
@@ -13,80 +13,96 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
-from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
-                           QPixmap)
+from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QPlainTextEdit,
-                               QPushButton, QGroupBox, QScrollArea, QSizePolicy, QSplitter,
+                               QPushButton, QGroupBox, QScrollArea, QSizePolicy, QSplitter, QGraphicsDropShadowEffect,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 BASE = os.environ.get("PZ_SERVER", "http://127.0.0.1:8765")
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 BACKDROP_IMAGE = ASSET_DIR / "background.png"
-BUILD = "b1106-1"
+BUILD = "b1119-1"
 ACCENT = "#2f2f2f"
 PICKER_QSS = """
-QMenu { background: #ffffff; border: 1px solid #d8d5cf; padding: 6px; }
+QMenu { background: #1a1713; border: 1px solid rgba(242,232,213,0.30); padding: 6px; color: #f2e8d5; }
 QMenu::item { padding: 7px 26px 7px 12px; }
-QMenu::item:selected { background: #efece6; }
-QMenu::item:disabled { color: #8a857c; }
-QMenu::separator { height: 1px; background: #e6e3dd; margin: 6px 8px; }
+QMenu::item:selected { background: rgba(242,232,213,0.12); }
+QMenu::item:disabled { color: #8f8370; }
+QMenu::separator { height: 1px; background: rgba(242,232,213,0.20); margin: 6px 8px; }
 """
-PAPER = "#f6f5f2"
-LINE = "#d8d5cf"
-MUTED = "#8a857c"
+PAPER = "#0d0b09"
+LINE = "rgba(242,232,213,0.28)"
+MUTED = "#c8b89f"
+ACCENT = "#e7c58a"
 
 QSS = f"""
 QMainWindow, QDialog {{ background: {PAPER}; }}
-QWidget {{ background: transparent; color: #23211e; font-size: 13.5px; }}
-QLabel#h1 {{ font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
+QWidget {{ background: transparent; color: #f2e8d5; font-size: 13.5px; }}
+QLabel#h1 {{ color: #f7ecd8; font-size: 19px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#muted {{ color: {MUTED}; }}
-QLabel#info {{ color: #a8a49c; font-size: 12px; }}
-QLabel#narration {{ color: #FFC90E; background: rgba(35,33,30,0.58);
-                    padding: 4px 12px; border-radius: 8px; }}
-QLabel#group {{ color: #000000; font-size: 12.5px; font-weight: 600;
+QLabel#info {{ color: #b9aa94; font-size: 11.5px; }}
+QLabel#narration {{ color: #f6e2b4; background: transparent; border: none;
+                    padding: 4px 12px; }}
+QLabel#group {{ color: #f3e6cf; font-size: 12.5px; font-weight: 600;
                 letter-spacing: 1px; }}
-QLabel#fieldName {{ color: #000000; }}
-QLineEdit {{ color: #000000; }}
-QLabel#tipItem {{ color: #b3aea6; }}
-QLabel#stamp {{ color: #b3aea6; font-size: 10px; }}
-QLabel#clock {{ color: #FFC90E; font-size: 12px; padding: 0 14px;
-               background: rgba(35,33,30,0.55); border-radius: 9px; }}
-QLabel#usage {{ color: #FFC90E; font-size: 12px;
-               background: rgba(35,33,30,0.55); border-radius: 11px; }}
-QFrame#card {{ background: rgba(255,255,255,0.72); border: 1px solid {LINE}; border-radius: 6px; }}
-QFrame#bubbleUser {{ background: #ffffff; border: 1px solid {LINE};
-                     border-top-right-radius: 10px; border-bottom-right-radius: 10px;
-                     border-top-left-radius: 10px; border-bottom-left-radius: 3px; }}
-QFrame#bubbleHer {{ background: #ffffff; border: 1px solid {LINE};
-                    border-top-left-radius: 10px; border-bottom-left-radius: 10px;
-                    border-top-right-radius: 10px; border-bottom-right-radius: 3px; }}
-QPushButton {{ border: 1px solid {LINE}; background: #ffffff; padding: 6px 16px;
-               border-radius: 5px; }}
-QPushButton:hover {{ border-color: {ACCENT}; }}
-QPushButton#nav {{ border: none; border-radius: 0; text-align: left;
-                   padding: 9px 18px; background: transparent; color: {MUTED}; }}
-QPushButton#nav:checked {{ background: rgba(255,255,255,0.60); border-left: 2px solid {ACCENT};
-                           color: #23211e; }}
+QLabel#fieldName {{ color: #f0e4d0; }}
+QLineEdit {{ color: #f6ecd8; placeholder-text-color: #cdbb9f; }}
+QLabel#tipItem {{ color: #c6b59d; }}
+QLabel#stamp {{ color: #b6a58c; font-size: 10px; }}
+QLabel#clock {{ color: #f8e9c8; font-size: 16px; font-weight: 600; padding: 6px 16px;
+               background: transparent; border: 1px solid rgba(242,232,213,0.30);
+               border-radius: 14px; }}
+QLabel#usage {{ color: #e5d3b5; font-size: 11.5px; background: transparent; }}
+QFrame#card {{ background: transparent; border: 1px solid {LINE}; border-radius: 8px; }}
+QFrame#chatShell {{ background: transparent; border: 1px solid rgba(242,232,213,0.38);
+                    border-radius: 10px; }}
+QFrame#inputShell {{ background: transparent; border: 1px solid rgba(242,232,213,0.34);
+                     border-radius: 8px; }}
+QFrame#usageBar {{ background: transparent; border: 1px solid rgba(242,232,213,0.26);
+                   border-radius: 8px; }}
+QFrame#msgCard {{ background: transparent; border: 1px solid rgba(242,232,213,0.42);
+                  border-radius: 10px; }}
+QFrame#msgCard QLabel {{ background: transparent; border: none; }}
+QFrame#tipBox {{ background: transparent; border: none; }}
+QPushButton {{ border: none; background: transparent; color: #f0e3cc;
+               padding: 6px 12px; }}
+QPushButton:hover {{ color: #ffffff; }}
+QPushButton#nav {{ border: none; background: transparent; color: {MUTED}; }}
+QPushButton#nav:checked {{ background: transparent; color: #f7e7c4; }}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox {{
-    border: 1px solid {LINE}; background: rgba(255,255,255,0.62); padding: 7px 9px; border-radius: 5px; }}
-QLineEdit:focus, QPlainTextEdit:focus {{ border-color: {ACCENT}; }}
+    border: none; background: transparent; padding: 7px 9px; color: #f6ecd8;
+    selection-background-color: rgba(231,197,138,0.35); }}
+QComboBox::drop-down {{ border: none; width: 16px; }}
+QComboBox QAbstractItemView {{ background: #1a1713; border: 1px solid {LINE};
+    color: #f2e8d5; selection-background-color: rgba(242,232,213,0.14); }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: #d8d5cf; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical {{ background: rgba(242,232,213,0.24); border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-QListWidget {{ border: 1px solid {LINE}; background: #ffffff; border-radius: 6px; }}
+QListWidget {{ border: 1px solid {LINE}; background: transparent; border-radius: 6px; }}
 QListWidget::item {{ padding: 8px 10px; }}
-QListWidget::item:selected {{ background: #efece6; color: #23211e; }}
-QPushButton#tipHeader {{ border: none; background: transparent; color: #a8a49c;
+QListWidget::item:selected {{ background: rgba(242,232,213,0.12); color: #fff6e4; }}
+QPushButton#tipHeader {{ border: none; background: transparent; color: #b9aa94;
                          padding: 2px 4px; text-align: left; font-size: 11px; }}
-QPushButton#tipHeader:hover {{ color: {ACCENT}; background: #efece6; }}
-QPushButton#picker {{ border: 1px solid {LINE}; padding: 5px 14px; background: rgba(255,255,255,0.62);
-                      border-radius: 5px; color: {MUTED}; }}
+QPushButton#tipHeader:hover {{ color: #f4e4c4; background: transparent; }}
+QPushButton#picker {{ border: none; padding: 2px 8px; background: transparent;
+                      color: #d9c7a7; }}
+QPushButton#winBtn {{ border: none; padding: 0; background: transparent;
+                      color: #f5e6c8; font-size: 16px; font-weight: 600; }}
+QPushButton#winBtn:hover {{ background: rgba(242,232,213,0.12); color: #fff6e4; }}
+QPushButton#winClose {{ border: none; padding: 0; background: transparent;
+                       color: #f5e6c8; font-size: 16px; font-weight: 600; }}
+QPushButton#winClose:hover {{ background: rgba(190,70,55,0.38); color: #fff; }}
+QCheckBox {{ color: #eadcc7; }}
+QGroupBox {{ border: 1px solid {LINE}; border-radius: 6px; margin-top: 10px;
+             padding-top: 8px; color: #f2e6d0; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px;
+                    color: #e7d6ba; }}
 """
-
 
 # ---------------- 网络 ----------------
 
@@ -144,6 +160,72 @@ class TurnWorker(QThread):
         finally:
             if parts and not getattr(self, "_finished", False):
                 self.done.emit("".join(parts))
+
+
+class ViewWorker(QThread):
+    """长连接 /events；只把后端算好的 view 交给界面。"""
+
+    view = Signal(dict)
+    stream = Signal(dict)
+    done = Signal(dict)
+    tool = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stop = False
+        self._resp = None
+
+    def stop(self):
+        self._stop = True
+        try:
+            if self._resp is not None:
+                self._resp.close()
+        except Exception:                    # noqa: BLE001
+            pass
+
+    def run(self):
+        import time as _t
+        import requests
+        import urllib3
+        urllib3.disable_warnings()
+        while not self._stop:
+            try:
+                with requests.get(f"{BASE}/events", stream=True, timeout=(5, 40),
+                                  proxies={"http": None, "https": None}) as resp:
+                    self._resp = resp
+                    if resp.status_code != 200:
+                        _t.sleep(2)
+                        continue
+                    kind = "message"
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if self._stop:
+                            break
+                        if not line:
+                            continue
+                        if line.startswith("event: "):
+                            kind = line[7:].strip()
+                        elif line.startswith("data: "):
+                            try:
+                                value = json.loads(line[6:])
+                            except json.JSONDecodeError:
+                                continue
+                            if kind == "view":
+                                self.view.emit(value)
+                            elif kind == "stream":
+                                self.stream.emit(value)
+                            elif kind == "done":
+                                self.done.emit(value)
+                            elif kind == "tool":
+                                self.tool.emit(value)
+                            elif kind == "error":
+                                self.error.emit(str(value.get("message") if isinstance(value, dict)
+                                                     else value))
+            except Exception:                # noqa: BLE001
+                if not self._stop:
+                    _t.sleep(2)
+            finally:
+                self._resp = None
 
 
 def api_get(path):
@@ -231,35 +313,27 @@ class Backdrop(QWidget):
         self.picture = QPixmap(str(BACKDROP_IMAGE)) if BACKDROP_IMAGE.exists() else QPixmap()
 
     def _draw_picture(self, painter):
-        """背景图铺满窗口，压到很淡，当作纸面底画。"""
-        if self.picture.isNull():
-            return
-        scaled = self.picture.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
-                                     Qt.SmoothTransformation)
-        painter.save()
-        painter.setOpacity(0.64)
-        painter.drawPixmap((self.width() - scaled.width()) // 2,
-                           (self.height() - scaled.height()) // 2, scaled)
-        painter.restore()
+        """背景图铺满整个窗口，压一层暗色保证文字可读。"""
+        painter.fillRect(self.rect(), QColor(PAPER))
+        if not self.picture.isNull():
+            scaled = self.picture.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
+                                         Qt.SmoothTransformation)
+            painter.setOpacity(1.0)
+            painter.drawPixmap((self.width() - scaled.width()) // 2,
+                               (self.height() - scaled.height()) // 2, scaled)
+        # 上下压暗、中间留亮；让顶部胶囊和底部输入在亮背景上也能读
+        shade = QLinearGradient(0, 0, 0, max(1, self.height()))
+        shade.setColorAt(0.0, QColor(8, 7, 6, 76))
+        shade.setColorAt(0.42, QColor(8, 7, 6, 18))
+        shade.setColorAt(0.72, QColor(8, 7, 6, 70))
+        shade.setColorAt(1.0, QColor(8, 7, 6, 188))
+        painter.fillRect(self.rect(), shade)
+        painter.end()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor(PAPER))
         self._draw_picture(painter)
-
-        painter.setPen(QPen(self.INK, 1.15))
-        painter.setBrush(Qt.NoBrush)
-
-        width, height = self.width(), self.height()
-        # 左边：两串，长短错开
-        self._hang(painter, 26, height * 0.52, 13, leaves=6)
-        self._hang(painter, 58, height * 0.30, -9, leaves=4)
-        # 右边：镜像，位置更靠上一点
-        self._hang(painter, width - 26, height * 0.44, -13, leaves=5)
-        self._hang(painter, width - 60, height * 0.24, 8, leaves=3)
-
-        painter.end()
 
     def _hang(self, painter, x, length, sway, leaves=5):
         """从顶边垂下来的一串：一条弯曲主茎，交错的叶子，末端一朵小花。"""
@@ -297,6 +371,15 @@ class Backdrop(QWidget):
                                 int(size), int(size))
 
 
+def _text_shadow(widget):
+    """给压在背景图上的文字一点暗影，避免和亮部糊在一起。"""
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(7)
+    effect.setOffset(0, 1)
+    effect.setColor(QColor(0, 0, 0, 210))
+    widget.setGraphicsEffect(effect)
+
+
 class Bubble(QFrame):
     """一条消息。透明容器；正文按段落拆成白底子容器。"""
 
@@ -304,10 +387,13 @@ class Bubble(QFrame):
         super().__init__()
         self.role = role
         self.bodies = []
-        self.setStyleSheet("QFrame#msgCard { background: transparent; border: none; }")
+        self.setObjectName("msgCard" if role not in ("narration", "tip") else "plain")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        if role in ("narration", "tip"):
+            layout.setContentsMargins(0, 0, 0, 0)
+        else:
+            layout.setContentsMargins(12, 9, 12, 9)
         layout.setSpacing(6)
 
         if role == "narration":
@@ -323,6 +409,7 @@ class Bubble(QFrame):
             metrics = QFontMetrics(label.font())
             natural = metrics.horizontalAdvance(str(text)) + 44
             label.setProperty("narration", True)
+            _text_shadow(label)
             layout.setContentsMargins(0, 2, 0, 2)
             row = QHBoxLayout()
             row.addStretch(1)
@@ -364,9 +451,9 @@ class Bubble(QFrame):
             body.setProperty("raw", paragraph)
             body.setTextInteractionFlags(Qt.TextSelectableByMouse)
             body.setObjectName("bubbleBody")
-            body.setStyleSheet(
-                "QLabel#bubbleBody { background: rgba(255,255,255,0.64); padding: 10px 12px;"
-                " border-radius: 6px; }")
+            body.setStyleSheet("QLabel#bubbleBody { background: transparent;"
+                               " border: none; padding: 2px 0; color: #f4ead6; }")
+            _text_shadow(body)
             layout.addWidget(body)
             self.bodies.append(body)
 
@@ -438,22 +525,16 @@ class TipGroup(QFrame):
 
 
 class HeaderBar(QWidget):
-    """顶栏。时钟不参与布局，按整个宽度算中心，保证正中对齐对话区。"""
+    """顶栏：左侧位置/状态，右侧最短计时器胶囊。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.clock = QLabel("◷", self)
+        self.setFixedHeight(42)
+        self.clock = QLabel("◷ --:--", self)
         self.clock.setObjectName("clock")
+        self.clock.setMinimumWidth(118)
         self.clock.setAlignment(Qt.AlignCenter)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.clock.adjustSize()
-        x = (self.width() - self.clock.width()) // 2
-        y = (self.height() - self.clock.height()) // 2
-        self.clock.move(max(0, x), max(0, y))
-        self.clock.raise_()
-
+        self.clock.setToolTip("最短的计时器")
 
 class StatePanel(QFrame):
     """状态抽屉（当前不常显，留作以后用）。"""
@@ -490,10 +571,13 @@ class ChatPage(QWidget):
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start()
 
-        self._poll_timer = _QT(self)
-        self._poll_timer.setInterval(6000)
-        self._poll_timer.timeout.connect(self._poll_history)
-        self._poll_timer.start()
+        self._view_worker = ViewWorker(self)
+        self._view_worker.view.connect(self._on_view)
+        self._view_worker.stream.connect(self._on_stream)
+        self._view_worker.done.connect(self._on_stream_done)
+        self._view_worker.tool.connect(self._on_tool)
+        self._view_worker.error.connect(self._on_stream_error)
+        self._view_worker.start()
         from PySide6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence("F5"), self, activated=self.reload_all)
         self._seen = 0
@@ -503,81 +587,108 @@ class ChatPage(QWidget):
         row_outer.setSpacing(0)
 
         outer = QVBoxLayout()
-        outer.setContentsMargins(32, 18, 32, 14)
-        outer.setSpacing(8)
+        outer.setContentsMargins(28, 18, 28, 14)
+        outer.setSpacing(10)
+
+        self.shell = QFrame()
+        self.shell.setObjectName("chatShell")
+        shell_box = QVBoxLayout(self.shell)
+        shell_box.setContentsMargins(14, 11, 14, 11)
+        shell_box.setSpacing(8)
 
         self.header = HeaderBar()
         head = QHBoxLayout(self.header)
-        head.setSpacing(18)
-
-        left = QWidget()
-        left_layout = QHBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(18)
-        title = QLabel("对话")
-        title.setObjectName("h1")
-        left_layout.addWidget(title)
-        self.info = QLabel("")
+        head.setContentsMargins(4, 0, 4, 0)
+        head.setSpacing(8)
+        self.info = QLabel("", self.header)
         self.info.setObjectName("info")
-        left_layout.addWidget(self.info)
-        left_layout.addStretch(1)
-        head.addWidget(left, 1)
-
+        _text_shadow(self.info)
+        self.info.move(4, 12)
+        self.info.raise_()
         head.addStretch(1)
-        self.model_btn = QPushButton()
-        self.model_btn.setObjectName("picker")
-        self.model_btn.setCursor(Qt.PointingHandCursor)
-        self.model_btn.clicked.connect(self.open_picker)
-        head.addWidget(self.model_btn)
-        outer.addWidget(self.header)
+        head.addWidget(self.header.clock)
+        head.addStretch(1)
+        shell_box.addWidget(self.header)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.stack = QWidget()
         self.messages = QVBoxLayout(self.stack)
-        self.messages.setSpacing(14)
+        self.messages.setSpacing(10)
         self.messages.addStretch(1)
         self.scroll.setWidget(self.stack)
+        self.scroll.setMinimumSize(0, 0)
+        self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.scroll.viewport().setAutoFillBackground(False)
         self.stack.setAutoFillBackground(False)
-        self.scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self._follow = True
         self._vbar = self.scroll.verticalScrollBar()
         self._vbar.rangeChanged.connect(self._on_range)
         self._vbar.valueChanged.connect(self._on_scroll)
         self.scroll.setContextMenuPolicy(Qt.CustomContextMenu)
         self.scroll.customContextMenuRequested.connect(self._chat_menu)
-        outer.addWidget(self.scroll, 1)
+        shell_box.addWidget(self.scroll, 1)
 
-        bar = QFrame()
-        bar.setObjectName("usageBar")
-        bar.setStyleSheet("QFrame#usageBar { border: none; background: transparent; }")
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(4, 2, 4, 0)
-        self.usage = QLabel("usage —")
-        self.usage.setObjectName("usage")
-        bar_layout.addWidget(self.usage)
-        bar_layout.addStretch(1)
-        self.pending_label = QLabel("")
-        self.pending_label.setObjectName("muted")
-        bar_layout.addWidget(self.pending_label)
-        row = QHBoxLayout()
+        input_shell = QFrame()
+        input_shell.setObjectName("inputShell")
+        input_row = QHBoxLayout(input_shell)
+        input_row.setContentsMargins(10, 2, 6, 2)
+        input_row.setSpacing(4)
         self.input = QLineEdit()
         self.input.setPlaceholderText("说点什么…")
         self.input.returnPressed.connect(self.send)
         send_btn = QPushButton("发送")
+        send_btn.setCursor(Qt.PointingHandCursor)
         send_btn.clicked.connect(self.send)
-        row.addWidget(self.input, 1)
-        row.addWidget(send_btn)
-        outer.addLayout(row)
-        outer.addWidget(bar)
+        input_row.addWidget(self.input, 1)
+        input_row.addWidget(send_btn)
+        shell_box.addWidget(input_shell)
 
-        self.load_history()
-        try:
-            self._on_usage(api_get("/usage") or {})
-        except Exception:                    # noqa: BLE001
-            pass
-        self.refresh_state()
+        usage_bar = QFrame()
+        usage_bar.setObjectName("usageBar")
+        self.usage_bar = usage_bar
+        usage_row = QHBoxLayout(usage_bar)
+        usage_row.setContentsMargins(10, 2, 8, 2)
+        usage_row.setSpacing(10)
+        self.usage = QLabel("usage —")
+        self.usage.setObjectName("usage")
+        self.pending_label = QLabel("")
+        self.pending_label.setObjectName("muted")
+        self.model_btn = QPushButton()
+        self.model_btn.setObjectName("picker")
+        self.model_btn.setCursor(Qt.PointingHandCursor)
+        self.model_btn.clicked.connect(self.open_picker)
+        self.think_btn = QPushButton()
+        self.think_btn.setObjectName("picker")
+        self.think_btn.setCursor(Qt.PointingHandCursor)
+        self.think_btn.setToolTip("思考强度")
+        self.think_btn.clicked.connect(self.open_think_picker)
+        usage_row.addWidget(self.usage)
+        usage_row.addWidget(self.pending_label)
+        usage_row.addStretch(1)
+        usage_row.addWidget(self.model_btn)
+        usage_row.addSpacing(8)
+        usage_row.addWidget(self.think_btn)
+        usage_row.addSpacing(4)
+        self._win_min = QPushButton("−")
+        self._win_max = QPushButton("□")
+        self._win_close = QPushButton("×")
+        for btn, tip in ((self._win_min, "最小化"), (self._win_max, "最大化"),
+                         (self._win_close, "关闭")):
+            btn.setObjectName("winBtn")
+            btn.setFixedSize(28, 24)
+            btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tip)
+            usage_row.addWidget(btn)
+        self._win_close.setObjectName("winClose")
+        self._win_min.clicked.connect(lambda: self.window().showMinimized())
+        self._win_max.clicked.connect(self._toggle_max)
+        self._win_close.clicked.connect(lambda: self.window().close())
+        shell_box.addWidget(usage_bar)
+
+        outer.addWidget(self.shell, 1)
         holder = QWidget()
         holder.setLayout(outer)
         row_outer.addWidget(holder, 1)
@@ -585,10 +696,168 @@ class ChatPage(QWidget):
         self.panel = StatePanel(self)
         self.panel.hide()
         self._last_message_at = 0
+        self._timer_targets = []
+        self._silence_at = 0
+        self._idle_enabled = True
+        self._idle_minutes = 30.0
+        self._view_timer_id = None
+        self._view_timer_name = ""
+        self._timer_deadline = 0.0
+        self._sync_pending = False
+        self._stream_active = False
+        self._stream_id = ""
+        self._stream_bubble = None
+        self._stream_label = None
+        self._buffer = ""
+        self._pending_user = None
         self.refresh_state()
+        self.refresh_view()
         self._tick_clock()
 
         self.refresh_model_text()
+
+    def shutdown(self):
+        try:
+            self._view_worker.stop()
+            if not self._view_worker.wait(2500):
+                self._view_worker.terminate()
+                self._view_worker.wait(500)
+        except Exception:                    # noqa: BLE001
+            pass
+
+    def refresh_view(self):
+        try:
+            view = api_get("/view")
+        except Exception:                    # noqa: BLE001
+            return
+        self._apply_view(view, force=True)
+
+    def _on_view(self, view):
+        self._apply_view(view)
+
+    def _apply_view(self, view, force=False):
+        if not isinstance(view, dict):
+            return
+        st = view.get("state") or {}
+        self.info.setText(f"角色位置：{st.get('location') or '未知'}　　"
+                          f"状态：{st.get('status') or '醒着'}")
+        usage = (view.get("usage") or {}).get("text")
+        if usage:
+            self.usage.setText(str(usage))
+        self._apply_timer(view.get("timer"))
+        if not force and (self._stream_active
+                          or (self.worker and self.worker.isRunning())):
+            return
+        messages = list(view.get("messages") or [])
+        if self._pending_user:
+            pending = str(self._pending_user.get("text") or "")
+            canonical = [str(m.get("text") or "") for m in messages
+                         if m.get("kind") == "user"]
+            if pending and pending not in canonical:
+                messages.append({"id": "local-user", "kind": "user",
+                                 "text": pending, "ts": ""})
+            elif pending:
+                self._pending_user = None
+        self._render_view_messages(messages)
+
+    def _on_stream(self, payload):
+        if not isinstance(payload, dict):
+            return
+        sid = str(payload.get("id") or "")
+        delta = str(payload.get("delta") or "")
+        if not delta:
+            return
+        if not self._stream_active or sid != self._stream_id or self._stream_bubble is None:
+            self._stream_active = True
+            self._stream_id = sid
+            self._buffer = ""
+            self.add_bubble("assistant", "", split=False)
+            self._stream_bubble = self.messages.itemAt(self.messages.count() - 2).widget()
+            labels = self._stream_bubble.findChildren(QLabel) if self._stream_bubble else []
+            self._stream_label = labels[-1] if labels else None
+        self._buffer += delta
+        if self._stream_label is not None:
+            self._stream_label.setText(wrap_chars(self._buffer))
+        if self._stream_bubble is not None:
+            self._fit_width(self._stream_bubble)
+        if self._follow:
+            self._vbar.setValue(self._vbar.maximum())
+
+    def _on_stream_done(self, payload):
+        if isinstance(payload, dict):
+            text = str(payload.get("text") or "")
+            if self._stream_label is not None and text:
+                self._stream_label.setText(wrap_chars(text))
+        self._stream_active = False
+        self._stream_bubble = None
+        self._stream_label = None
+
+    def _on_stream_error(self, message):
+        self._stream_active = False
+        self.add_bubble("narration", f"[连接出错] {message}")
+        self.refresh_view()
+
+    def _apply_timer(self, timer):
+        import time as _t
+        if not timer:
+            self._view_timer_id = None
+            self._view_timer_name = ""
+            self._timer_deadline = 0.0
+            return
+        try:
+            remain = float(timer.get("remainingMs") or 0) / 1000.0
+            grace = float(timer.get("graceMs") or 0) / 1000.0
+        except (TypeError, ValueError):
+            remain, grace = 0.0, 0.0
+        self._view_timer_id = timer.get("id")
+        self._view_timer_name = str(timer.get("label") or "")
+        self._timer_deadline = _t.monotonic() + remain + grace
+
+    def _sync_timer(self):
+        if self._sync_pending:
+            return
+        self._sync_pending = True
+        try:
+            data = api_send("POST", "/sync", {"timerId": self._view_timer_id})
+            if isinstance(data, dict) and isinstance(data.get("view"), dict):
+                self._apply_view(data["view"], force=True)
+        except Exception:                    # noqa: BLE001
+            pass
+        finally:
+            self._sync_pending = False
+
+    def _render_view_messages(self, messages):
+        self._clear_bubbles()
+        group = None
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            kind = str(msg.get("kind") or "")
+            ts = str(msg.get("ts") or "")
+            if kind == "tip":
+                if group is None:
+                    group = TipGroup()
+                    self.messages.insertWidget(self.messages.count() - 1, group)
+                for item in msg.get("items") or []:
+                    if isinstance(item, dict):
+                        group.add(str(item.get("text") or ""))
+                continue
+            group = None
+            text = str(msg.get("text") or "")
+            if not text:
+                continue
+            if kind in ("scene", "action", "narration"):
+                self.add_bubble("narration", text, ts=ts)
+            elif kind == "line":
+                self.add_bubble("assistant", text, ts=ts)
+            elif kind in ("user", "assistant"):
+                self.add_bubble(kind, text, ts=ts)
+        if group is not None:
+            group.collapse()
+        from PySide6.QtCore import QTimer
+        for delay in (0, 50, 200):
+            QTimer.singleShot(delay, self._settle)
+        self.scroll_to_bottom()
 
     def load_history(self):
         """启动时把 session 回放出来，切页不会丢对话。"""
@@ -672,24 +941,26 @@ class ChatPage(QWidget):
         self.scroll_to_bottom()
 
     def _tick_clock(self):
+        """本地只负责显示后端给的最近计时器；到零请求 /sync。"""
         import time as _t
-        from datetime import datetime
-        now = datetime.now()
-        stamp = now.strftime("%H:%M")
-        idle = ""
-        last = getattr(self, "_last_message_at", 0) or 0
-        if last:
-            secs = max(0, int(_t.time() - float(last)))
-            if secs >= 3600:
-                idle = f"已静默 {secs // 3600} 小时 {secs % 3600 // 60} 分"
-            elif secs >= 60:
-                idle = f"已静默 {secs // 60} 分"
+        if self._view_timer_id:
+            left = self._timer_deadline - _t.monotonic()
+            if left <= 0:
+                self.header.clock.setText("◷ 00:00")
+                self.header.clock.setToolTip(f"{self._view_timer_name or '计时器'}\n已到点")
+                if not self._sync_pending:
+                    self._sync_timer()
+                return
+            sec = int(left)
+            if sec >= 3600:
+                shown = f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
             else:
-                idle = f"已静默 {secs} 秒"
-        self.header.clock.setText(f"◷　{idle}" if idle else "◷")
-        self.header.clock.adjustSize()
-        x = (self.header.width() - self.header.clock.width()) // 2
-        self.header.clock.move(max(0, x), self.header.clock.y())
+                shown = f"{sec // 60:02d}:{sec % 60:02d}"
+            self.header.clock.setText(f"◷ {shown}")
+            self.header.clock.setToolTip(f"{self._view_timer_name or '计时器'}\n剩余 {shown}")
+            return
+        self.header.clock.setText("◷ --:--")
+        self.header.clock.setToolTip("当前没有计时器")
 
     def toggle_panel(self):
         show = not self.panel.isVisible()
@@ -700,12 +971,23 @@ class ChatPage(QWidget):
             self.refresh_state()
         else:
             self.panel.hide()
-        self.state_btn.setChecked(show)
+        if hasattr(self, "state_btn"):
+            self.state_btn.setChecked(show)
 
     # ---------- 模型 / 思考强度 ----------
 
+    def _toggle_max(self):
+        win = self.window()
+        if win.isMaximized():
+            win.showNormal()
+            self._win_max.setText("□")
+        else:
+            win.showMaximized()
+            self._win_max.setText("❐")
+
     def refresh_model_text(self):
-        self.model_btn.setText(f"{self.model_name}　·　{self.think_level}　▾")
+        self.model_btn.setText(f"{self.model_name}　▾")
+        self.think_btn.setText(f"{self.think_level.upper()}　▾")
 
     def open_picker(self):
         from PySide6.QtWidgets import QMenu
@@ -718,15 +1000,20 @@ class ChatPage(QWidget):
             act.setCheckable(True)
             act.setChecked(name == self.model_name)
             act.triggered.connect(lambda _=False, n=name: self.pick_model(n))
-        menu.addSeparator()
-        head2 = menu.addAction("推理等级")
-        head2.setEnabled(False)
+        menu.exec(self.model_btn.mapToGlobal(self.model_btn.rect().topLeft()))
+
+    def open_think_picker(self):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet(PICKER_QSS)
+        head = menu.addAction("思考强度")
+        head.setEnabled(False)
         for level in ("Off", "Low", "High", "Max"):
             act = menu.addAction(level)
             act.setCheckable(True)
             act.setChecked(level == self.think_level)
             act.triggered.connect(lambda _=False, lv=level: self.pick_think(lv))
-        menu.exec(self.model_btn.mapToGlobal(self.model_btn.rect().bottomLeft()))
+        menu.exec(self.think_btn.mapToGlobal(self.think_btn.rect().topLeft()))
 
     def pick_model(self, name):
         self.model_name = name
@@ -759,6 +1046,25 @@ class ChatPage(QWidget):
             self.panel.update_text(f"读不到状态：{e}")
             return
         self._last_message_at = s.get("lastMessageAt") or self._last_message_at
+        self._timer_targets = []
+        for t in s.get("timers") or []:
+            try:
+                at = float(t.get("at") or 0)
+            except (TypeError, ValueError):
+                continue
+            if at:
+                self._timer_targets.append((at, "动作", str(t.get("text") or "动作")))
+        try:
+            cfg = api_get("/config") or {}
+            node = ((cfg.get("harness") or {}).get("idle")) or {}
+            self._idle_enabled = bool(node.get("enabled", True))
+            self._idle_minutes = max(1.0, float(node.get("afterMinutes", 30)))
+        except Exception:                    # noqa: BLE001
+            pass
+        self._silence_at = 0
+        if (self._idle_enabled and s.get("active") != "sleep"
+                and self._last_message_at):
+            self._silence_at = float(self._last_message_at) + self._idle_minutes * 60
         pos = (s.get("local") or "未知").split("/")[-1]
         state_txt = "睡着" if s.get("active") == "sleep" else "醒着"
         self.info.setText(f"角色位置：{pos}　　状态：{state_txt}")
@@ -793,11 +1099,8 @@ class ChatPage(QWidget):
         self._seen = 0
 
     def reload_all(self):
-        """清掉界面上的消息，从头拉一遍会话和状态。"""
-        self._clear_bubbles()
-        self.refresh_state()
-        self.load_history()
-        self.scroll_to_bottom()
+        """手动刷新：重新拉完整 view。"""
+        self.refresh_view()
 
     def add_bubble(self, role, text, media=None, ts="", split=None):
         if not ts:
@@ -817,26 +1120,23 @@ class ChatPage(QWidget):
 
     def send(self):
         text = self.input.text().strip()
-        if not text or (self.worker and self.worker.isRunning()):
+        if not text:
             return
         self.input.clear()
         self._follow = True
+        # 乐观显示；后端 view 到达前由 _pending_user 兜住
+        self._pending_user = {"text": text}
         self.add_bubble("user", text)
         self.scroll_to_bottom()
-        self.add_bubble("assistant", "", split=False)
-        self._stream_bubble = self.messages.itemAt(self.messages.count() - 2).widget()
-        self._stream_label = self._stream_bubble.findChildren(QLabel)[-1]
-        self._buffer = ""
-        self._tip_group = None
-
-
-        self.worker = TurnWorker(text)
-        self.worker.tool.connect(self._on_tool)
-        self.worker.usage.connect(self._on_usage)
-        self.worker.delta.connect(self._on_delta)
-        self.worker.done.connect(self._on_done)
-        self.worker.failed.connect(self._on_error)
-        self.worker.start()
+        try:
+            data = api_send("POST", "/turn", {"text": text})
+        except Exception as exc:              # noqa: BLE001
+            self._pending_user = None
+            self.add_bubble("narration", f"[发送失败] {type(exc).__name__}: {exc}")
+            return
+        if isinstance(data, dict) and data.get("error"):
+            self._pending_user = None
+            self.add_bubble("narration", f"[发送失败] {data['error']}")
 
     def _fit_width(self, bubble):
         if getattr(bubble, "role", "") == "narration":
@@ -961,13 +1261,7 @@ class ChatPage(QWidget):
         if self._tip_group is not None:
             self._tip_group.collapse()
             self._tip_group = None
-        # 这一轮已经流式画过了，把轮询游标推到服务端末尾，避免重复渲染
-        try:
-            data = api_get("/history?limit=20")
-            self._seen = int(data.get("total") or 0)
-        except Exception:                    # noqa: BLE001
-            pass
-        self.refresh_state()
+        self.refresh_view()
 
     def _on_error(self, message):
         label = getattr(self, "_stream_label", None)
@@ -1124,7 +1418,7 @@ class ConfigPage(QWidget):
         outer.setSpacing(10)
 
         head = QHBoxLayout()
-        title = QLabel("配置")
+        title = QLabel("设置")
         title.setObjectName("h1")
         head.addWidget(title)
         head.addStretch(1)
@@ -1513,15 +1807,221 @@ class RealmPage(QWidget):
 
 # ---------------- 主窗口 ----------------
 
+class NavButton(QWidget):
+    """64px 侧栏图标按钮：透明底、无边框，只有图标和极小的名字。"""
+
+    clicked = Signal()
+
+    def __init__(self, key, label, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.label = label
+        self._active = False
+        self._hover = False
+        self.setFixedSize(64, 70)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(label)
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def set_active(self, on):
+        if self._active != bool(on):
+            self._active = bool(on)
+            self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        color = QColor("#f7e7c4") if self._active else QColor(
+            "#e4d3b6" if self._hover else "#c8b89f")
+        if self._active:
+            painter.setPen(QPen(QColor("#e7c58a"), 2))
+            painter.drawLine(1, 16, 1, self.height() - 16)
+        self._icon(painter, self.key, self.width() // 2, 25, 10.0, color)
+        painter.setPen(QPen(color, 1))
+        font = painter.font()
+        font.setPointSizeF(8.2)
+        painter.setFont(font)
+        painter.drawText(self.rect().adjusted(0, 48, 0, 0), Qt.AlignHCenter | Qt.AlignTop,
+                         self.label)
+
+    @staticmethod
+    def _icon(painter, key, cx, cy, size, color):
+        pen = QPen(color, 1.5)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        if key == "chat":
+            path = QPainterPath()
+            path.addRoundedRect(cx - size, cy - size * 0.72, size * 2, size * 1.35, 4, 4)
+            painter.drawPath(path)
+            painter.drawLine(cx - size * 0.55, cy - size * 0.05,
+                             cx + size * 0.55, cy - size * 0.05)
+            painter.drawLine(cx - size * 0.55, cy + size * 0.35,
+                             cx + size * 0.15, cy + size * 0.35)
+            tail = QPainterPath()
+            tail.moveTo(cx - size * 0.55, cy + size * 0.62)
+            tail.lineTo(cx - size * 0.80, cy + size * 1.05)
+            tail.lineTo(cx - size * 0.20, cy + size * 0.62)
+            painter.drawPath(tail)
+        elif key == "comm":
+            painter.drawEllipse(cx - 3, cy - 3, 6, 6)
+            for r in (size * 0.65, size * 1.05):
+                painter.drawArc(cx - r, cy - r, r * 2, r * 2, 40 * 16, 100 * 16)
+                painter.drawArc(cx - r, cy - r, r * 2, r * 2, 220 * 16, 100 * 16)
+        elif key == "realm":
+            left = QPainterPath()
+            left.moveTo(cx, cy - size * 0.55)
+            left.cubicTo(cx - size * 0.25, cy - size * 0.85, cx - size * 0.85, cy - size * 0.75,
+                         cx - size, cy - size * 0.45)
+            left.lineTo(cx - size, cy + size * 0.55)
+            left.cubicTo(cx - size * 0.65, cy + size * 0.30, cx - size * 0.25, cy + size * 0.35,
+                         cx, cy + size * 0.62)
+            painter.drawPath(left)
+            right = QPainterPath()
+            right.moveTo(cx, cy - size * 0.55)
+            right.cubicTo(cx + size * 0.25, cy - size * 0.85, cx + size * 0.85, cy - size * 0.75,
+                          cx + size, cy - size * 0.45)
+            right.lineTo(cx + size, cy + size * 0.55)
+            right.cubicTo(cx + size * 0.65, cy + size * 0.30, cx + size * 0.25, cy + size * 0.35,
+                          cx, cy + size * 0.62)
+            painter.drawPath(right)
+            painter.drawLine(cx, cy - size * 0.55, cx, cy + size * 0.62)
+        elif key == "skill":
+            path = QPainterPath()
+            for i in range(8):
+                import math
+                r = size * 1.05 if i % 2 == 0 else size * 0.32
+                a = math.radians(-90 + i * 45)
+                x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+                path.moveTo(x, y) if i == 0 else path.lineTo(x, y)
+            path.closeSubpath()
+            painter.drawPath(path)
+            painter.drawEllipse(cx - 1.5, cy - 1.5, 3, 3)
+        elif key == "settings":
+            for offset, knob in ((-size * 0.62, -size * 0.25), (0, size * 0.32),
+                                 (size * 0.62, -size * 0.05)):
+                y = cy + offset
+                painter.drawLine(cx - size, y, cx + size, y)
+                painter.drawEllipse(cx + knob - 2, y - 2, 4, 4)
+
+class CommPage(QWidget):
+    """通信设备：占位页，保持与主会话相同的透明容器风格。"""
+
+    def __init__(self):
+        super().__init__()
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 18, 28, 14)
+        shell = QFrame()
+        shell.setObjectName("chatShell")
+        box = QVBoxLayout(shell)
+        box.setContentsMargins(24, 20, 24, 20)
+        title = QLabel("通信设备")
+        title.setObjectName("h1")
+        box.addWidget(title)
+        hint = QLabel("尚未接入通信设备。")
+        hint.setObjectName("muted")
+        box.addWidget(hint)
+        box.addStretch(1)
+        outer.addWidget(shell, 1)
+
+class WindowControls(QWidget):
+    """无边框窗口的最小化/最大化/关闭，固定在右下角。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(92, 26)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        self.btn_min = QPushButton("−")
+        self.btn_max = QPushButton("□")
+        self.btn_close = QPushButton("×")
+        for btn, tip in ((self.btn_min, "最小化"), (self.btn_max, "最大化"),
+                         (self.btn_close, "关闭")):
+            btn.setObjectName("winBtn")
+            btn.setFixedSize(28, 24)
+            btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tip)
+            row.addWidget(btn)
+        self.btn_close.setObjectName("winClose")
+        self.btn_min.clicked.connect(lambda: self.window().showMinimized())
+        self.btn_max.clicked.connect(self.toggle_max)
+        self.btn_close.clicked.connect(lambda: self.window().close())
+
+    def toggle_max(self):
+        win = self.window()
+        if win.isMaximized():
+            win.showNormal()
+            self.btn_max.setText("□")
+        else:
+            win.showMaximized()
+            self.btn_max.setText("❐")
+
+
+class DragBar(QWidget):
+    """无边框窗口的透明拖动带，只占顶部 10px，不挡胶囊。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(10)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setStyleSheet("background: transparent;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            handle = self.window().windowHandle()
+            if handle is not None:
+                handle.startSystemMove()
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        win = self.window()
+        if win.isMaximized():
+            win.showNormal()
+        else:
+            win.showMaximized()
+        super().mouseDoubleClickEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         refresh_ui_settings()
         self.setWindowTitle(f"PhilosophicalZombie · {BUILD}")
-        self.resize(1180, 760)
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        width = min(1440, max(1080, (avail.width() if avail else 1440) - 16))
+        height = min(900, max(700, (avail.height() if avail else 900) - 16))
+        self.setMinimumSize(1080, 700)
+        self.resize(width, height)
+        if avail is not None:
+            self.move(avail.x() + (avail.width() - width) // 2,
+                      avail.y() + (avail.height() - height) // 2)
 
         self.backdrop = Backdrop(self)
         self.backdrop.lower()
+        self.dragbar = DragBar(self)
+        self.dragbar.raise_()
+        self.winbar = WindowControls(self)
+        self.winbar.raise_()
 
         root = QWidget()
         layout = QHBoxLayout(root)
@@ -1529,21 +2029,22 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         nav = QWidget()
-        nav.setFixedWidth(96)
+        nav.setFixedWidth(64)
         nav_layout = QVBoxLayout(nav)
-        nav_layout.setContentsMargins(0, 16, 0, 16)
+        nav_layout.setContentsMargins(0, 14, 0, 14)
         nav_layout.setSpacing(2)
 
         self.pages = QStackedWidget()
         self.buttons = []
-        for index, (label, page) in enumerate([
-                ("对话", ChatPage()), ("配置", ConfigPage()),
-                ("识域", RealmPage()), ("技能", SkillPage())]):
-            btn = QPushButton(label)
-            btn.setObjectName("nav")
-            btn.setCheckable(True)
-            btn.setChecked(index == 0)
-            btn.clicked.connect(lambda _=False, i=index: self.switch(i))
+        for index, (key, label, page) in enumerate([
+                ("chat", "主会话", ChatPage()),
+                ("comm", "通信设备", CommPage()),
+                ("realm", "识域", RealmPage()),
+                ("skill", "技能", SkillPage()),
+                ("settings", "设置", ConfigPage())]):
+            btn = NavButton(key, label)
+            btn.set_active(index == 0)
+            btn.clicked.connect(lambda i=index: self.switch(i))
             nav_layout.addWidget(btn)
             self.buttons.append(btn)
             self.pages.addWidget(page)
@@ -1553,22 +2054,50 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pages, 1)
         self.setCentralWidget(root)
         self.setStyleSheet(QSS)
+        self.position_winbar()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.backdrop.setGeometry(0, 0, self.width(), self.height())
         self.backdrop.lower()
+        if hasattr(self, "dragbar"):
+            self.dragbar.setGeometry(0, 0, self.width(), 10)
+            self.dragbar.raise_()
+        if hasattr(self, "winbar"):
+            self.position_winbar()
+
+    def position_winbar(self):
+        if not hasattr(self, "winbar"):
+            return
+        page = self.pages.currentWidget()
+        if isinstance(page, ChatPage):
+            self.winbar.hide()
+            return
+        self.winbar.show()
+        self.winbar.move(self.width() - 104, self.height() - 38)
+        self.winbar.raise_()
 
     def switch(self, index):
         for i, btn in enumerate(self.buttons):
-            btn.setChecked(i == index)
+            btn.set_active(i == index)
         self.pages.setCurrentIndex(index)
+        self.position_winbar()
+        page = self.pages.currentWidget()
+        if isinstance(page, ChatPage):
+            page.refresh_view()
+
+    def closeEvent(self, event):
+        for i in range(self.pages.count()):
+            page = self.pages.widget(i)
+            if isinstance(page, ChatPage):
+                page.shutdown()
+        super().closeEvent(event)
 
 
 def main():
     app = QApplication(sys.argv)
     print(f"[UI] build={BUILD}  server={BASE}", flush=True)
-    font = QFont("Microsoft YaHei UI", 10)
+    font = QFont("Segoe UI", 10)
     app.setFont(font)
     window = MainWindow()
     window.show()

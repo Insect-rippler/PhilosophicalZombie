@@ -255,7 +255,7 @@ ConsciousnessRealm/plan/
 主代理（brain）负责说话和决定做什么；body 负责判定这些决定落在她身上合不合理。
 
 ```
-brain 想做事 → 调 active(description, slot)
+brain 想做事 → 调 active(short / long / event + seconds)
              → body 判定：做不做得成 / 多久 / 在哪做完 / 有什么变化 / 到点显示什么
              → 写计时器 → 把回执作为 function_call_output 还给 brain
              → brain 继续写正文（被拒绝就改计划）
@@ -303,16 +303,16 @@ brain 想做事 → 调 active(description, slot)
 
 三个行动槽互不阻塞，同一条回复只能递交其中一个：
 
-| 槽位 | 时长上限 | 说明 |
-|---|---:|---|
-| `short` | 5.3 分钟 | 几十秒到几分钟的事 |
-| `long` | 187 分钟 | 身体腾不出来的事 |
-| `event` | 463 分钟 | 整段交出去的活：打一天铁、守夜、赶路 |
-| `alarm` | — | 独立计时器，到点提醒/叫醒 |
+| 槽位 | 装什么 |
+|---|---|
+| `short` | 具体短动作；带 `location` 时改变位置 |
+| `long` | 长时间、低复杂度的单一动作：打盹、守夜、读书、赶路 |
+| `event` | 长时间、高复杂度的连续动作集合：打一整天铁、下坑救人 |
+| `alarm` | 独立计时器，到点提醒/叫醒 |
 
-占身的事没做完时，再要一件会被拒绝，回执带着她正在做什么和还剩多久：「身体正忙着「去厨房烧水煮面」，还剩 4 分 12 秒（19:04 结束）。想立刻改做别的就带 force；想等就以一句正文结束这一轮。」
+槽位没空时再递同一槽会被拒绝，回执写清还剩多久：「未受理：short 正在执行，还剩 00:04:12。等它结束再递，或带 force 打断。」
 
-`active(force=true)` 让她放下手上的事改做别的。被撤销的那件拿不到奖励（只有等到期结算的才有），回执里带 `cancelled`。`force` 只解除占身，不解除身体限制——累到动不了照样拒绝。
+`active(force=true)` 覆盖本次要用的那个槽：撤掉该槽没做完的事，再受理新动作。被撤销的那件拿不到奖励。`end` 用于提前结束 `long` / `event`，按已进行比例折算奖励；它是提前结束，不是跳过时间。
 
 时长来源：日常行为按常识判，量级写在 `body/judge.json`；特殊行为（锻造、治疗、委托、长途）查 `world/activities.json`，以表里的 `duration` 为准。日常行为不建表——模型对「洗个澡要多久」的常识比表更可靠，建表只是维护负担。
 
@@ -335,66 +335,64 @@ brain 想做事 → 调 active(description, slot)
 > 整份工具列表变长后，模型开始「用文字模拟工具调用」而不是真的调 `active`；
 > 压回三个参数就恢复了。
 
-## 地点与环境
+## 随机事件
 
-两张表各管一件事，都在 `ConsciousnessRealm/world/`：
-
-| 文件 | 内容 | 谁读 |
-|---|---|---|
-| `places.json` | 地点名 → 室内外、夜间人流、风险、常驻的人 | `timers.render_environment` |
-| `ognisko/places.json` | 地图：id、path、相连关系与步行分钟 | `events.current_place_id`、移动判定 |
-
-`places.json` 是**环境与风险**的来源，缺一个地点，state 里就没有那一行；
-`ognisko/places.json` 是**地图拓扑**，缺一个地点，走动时长就只能估。
-两边都加齐最稳；只有一边时，代码会退回到按名字匹配。
-
-## 世界包
-
-每张大地图是一个独立的 world pack，换世界只改 `world/active.json` 的指向：
+每个 tick（60 秒）掷一次 1%，触发后 30 分钟冷却。事件由模型按当前状态、最近经历、位置、天气、气温与地图风险生成，写进 `plan/agenda.json`：
 
 ```
-ConsciousnessRealm/world/
-├── active.json            # {"world": "ognisko"}
-├── slots.json             # 槽位容量（跨世界通用）
-└── ognisko/               # 奥格尼斯科：一座移动地块
-    ├── places.json        # 地图：地点、相连关系、步行分钟
-    └── activities.json    # 特殊行为表（目前空）
+kind: event
+event: {scene, opening, condition, limitSeconds, deadlineAt,
+        reward, penalty, state}
 ```
 
-`places.json` 片段：
+它在 `<plan>` 里以 `[随机事件]` 标出，和 `[自定]` 目标分开。限时 900~86400 秒；在时限内用 `plan` 的 `done` 结束，下个 tick 结算奖励；超时或 `abandon` 按失败结算。
 
-```json
-{"id": "hall", "name": "主街", "path": "奥格尼斯科/主街",
- "links": [{"to": "deck", "minutes": 2}, {"to": "workshop", "minutes": 3}]}
+## 地图
+
+运行时地图在 `state/world/map.json`，第一次读时从卡内的 `realm/world/map.seed.json` 初始化：
+
+```
+节点：完整地点名（如「荒野/营地」）+ 风险 0~3
+边：默认双向，单段 1~120 秒
 ```
 
-`links` 是单向的，双向要各写一条。`minutes` 是她实际走这段路要花的分钟数，body 判移动时长时直接查这张表，不自己估。
+日常用 `map` 工具：
 
-地图边界的处理：允许她走到表外的地方（模型写什么就记什么），但同一处写法要一致——以后补地点时才不会出现「厨房」和「一楼厨房」两个名字。
+```
+query   target             当前地点到目标的前三条路线（总时间 + 风险）
+create  target + risk + time  新建节点，自动连到当前地点
+link    target + link + time  新建/修改两地连线
+```
+
+`unlink` / `set_risk` / `delete` / `merge` 只在 dream 开放。
+
+`short` 带 `location` 时先过地图：地点不存在先 `query` 关键字、再 `create`；存在但和当前不直接相连则退回并给路线；相邻才受理。模型填的时间与地图差超过 ±20% 时，按地图用时建计时器，回执说明。`long` / `event` 的 `location` 不走地图，只在到点时校验她是否在那里。
+
+dream 检测地图 hash 变化后最多跑 10 轮审校，可以连续执行多个 map 操作；校验失败回滚。
 
 ## 状态与计时器
 
-`<state>` 是**常驻**内容，不是有事才出现：
+`<state>` 是常驻内容：
 
 ```xml
 <state>
-现在是 21:12（夜里）。
-你在罗德岛/走廊。
-有些饿了。
-[刚刚] 面煮好了，锅还在灶上。
+当前时间：09:20:00（上午）。
+距上一次行动已过去 00:18:42。
+角色当前位置：荒野/营地（风险 0：安全）。
+角色当前穿着：深棕色粗布工装上衣……
+[short] 正在做：我把水囊灌满（还剩 00:01:30）
+[long] 正在做：我在墙根坐下歇一阵（已过 00:20:00 / 共 01:00:00，进度 33%）
+[event] 空
+刚刚发生：我把水囊灌满，系回行囊侧袋（完成）
 </state>
 ```
 
-正常时只有时间；有位置、有异常、有刚发生的事才追加，一次只报最要紧的一条症状，不堆。
+- 身体、情绪只在阶段有话说时出现；正常时省略。
+- 环境、风险、常见人物不写进 state；风险只跟在当前位置后面。
+- `long` / `event` 显示已过/共/进度；`short` 显示剩余。
+- 到点文本进「刚刚发生」，下一轮取走。
 
-计时器分成两个独立阶段：
-
-| 阶段 | 谁做 | 做什么 |
-|---|---|---|
-| 一（同步，回合内） | body | 判定行动 → 建计时器，**连到期后要显示的文本一起写好** |
-| 二（异步，纯代码） | `engine/timers.py` | 到期 → 落数值/位置/状态 → 把文本倒进缓存池 → 主代理下一轮取走合并 |
-
-第二阶段不调用模型：文字在阶段一就写好了，这里只做搬运、排序、拼接。
+`active` 受理即建计时器，body 后台只补奖励与到点文本；到点由 `engine/timers.py` 纯代码结算。
 
 ```
 state/realTime/
@@ -402,8 +400,6 @@ state/realTime/
 ├── timers.json      # 计时器列表
 └── pending.json     # 到期文本缓存池（下一轮取走清空）
 ```
-
-字段约定：`kind`（`action` / `event` / `alarm`）、`slot`（`short` / `long` / `event` / `alarm`）、`silent`（只结算不提示）、`chance`（概率，1000 = 一定触发）。只有 `event` 类到期需要唤醒主代理，动作类只是随下一轮带过去。
 
 ## 工具
 
@@ -414,6 +410,7 @@ state/realTime/
 |---|---|---|
 | `active` | 无脚本，由 `engine/body.py` 处理 | 声明动作，交给 body 判定并挂计时器 |
 | `alarm` | 无脚本，由 `engine/tools.py` 处理 | 独立闹钟，到点叫醒/提醒 |
+| `map` | 无脚本，由 `engine/worldmap.py` 处理 | 地图查询、建点、连线；dream 才开放全量 |
 | `fight` | 无脚本，由 `engine/body.py` / `combat.py` 处理 | 回合制战斗 |
 | `remember` | `function/remember/` | 写一条记忆块，进向量库等升格 |
 | `plan` | `function/plan/` | 目标的创建、推进、搁置、完成 |
@@ -454,7 +451,7 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
 
 ## 沙箱后端
 
-模拟世界这一层的模块，都在 `engine/` 下，数据在 `ConsciousnessRealm/world/<世界>/`。
+模拟世界这一层的模块，都在 `engine/` 下；地图种子在 `cards/<卡>/realm/world/`，运行时地图在 `state/world/`。
 
 | 模块 | 作用 |
 |---|---|
@@ -488,7 +485,7 @@ python ConsciousnessRealm/lorebook/lorebook_store.py freq <语料.jsonl>
    → 困了或上下文满 → 睡 → 睡够 → 做梦整理 → 醒
 ```
 
-**数据包**：地图、事件、委托、提醒、敌人全在 `world/<世界>/` 里，换世界观整包替换；换角色换 `characters/<名>/combat.json`。
+**数据包**：地图种子在 `realm/world/map.seed.json`；事件、委托、提醒、敌人仍在 `world/` 包里；换角色换 `characters/<名>/combat.json`。
 
 ## 运行日志
 

@@ -103,13 +103,16 @@ def chunk_group(group, agent_name, user_name):
                 except json.JSONDecodeError:
                     args = {}
                 if name == "active":
-                    desc = str(args.get("description") or "").strip()
+                    desc = next((str(args.get(k) or "").strip()
+                                 for k in ("short", "long", "event")
+                                 if str(args.get(k) or "").strip()), "")
                     scene = str(args.get("scene") or "").strip()
-                    said = str(args.get("line") or "").strip()
                     if desc:
                         lines.append(f"{agent_name}（动作）：{desc}")
                     if scene:
                         lines.append(f"场景：{scene}")
+                elif name == "line":
+                    said = str(args.get("text") or "").strip()
                     if said:
                         lines.append(f"{agent_name}：{said}")
                 elif name == "alarm":
@@ -164,19 +167,32 @@ def compress(summary, *, cfg_path=CFG, session_path=SESSION, history_dir=HISTORY
     retained = groups[-retained_n:]
     archived = groups[:-retained_n]
 
-    # 细切：保留区里只留最近 N 个往返，更旧的挪进归档
+    # 细切：全局预算。从最新往回走：
+    #   tool 与带 tool_calls 的 assistant 直接丢
+    #   assistant（有正文）算 1 条 A，上限 = 倍率 × N；超出就不再收
+    #   user 无条件收，不占名额
+    # 极端情况会得到 U U … U A A … A（老的 U 留着，它们后面的 A 被预算挤掉）
+    ratio = float(session_cfg.get("retainedRatio", 4))
+    max_a = int(ratio * retained_n)
     flat = [m for g in retained for m in g]
-    keep, dropped, turns = [], [], 0
+    keep_rev, a_count = [], 0
     for msg in reversed(flat):
-        if turns >= retained_n and msg.get("role") != "user":
-            dropped.append(msg)
+        role = msg.get("role")
+        if role == "tool":
             continue
-        keep.append(msg)
-        if msg.get("role") == "assistant" and msg.get("reasoning_content"):
-            turns += 1
-    keep.reverse()
-    dropped.reverse()
-
+        if role == "assistant" and msg.get("tool_calls"):
+            continue
+        if role == "assistant":
+            if a_count >= max_a:
+                continue
+            keep_rev.append(msg)
+            a_count += 1
+        else:
+            keep_rev.append(msg)
+    keep_rev.reverse()
+    keep = keep_rev
+    keep_ids = {id(m) for m in keep}
+    dropped = [m for m in flat if id(m) not in keep_ids]
     archived_messages = [m for g in archived for m in g] + dropped
 
     # 1) 切片：归档内容同一遍扫下来

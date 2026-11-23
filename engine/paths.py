@@ -1,6 +1,6 @@
 """全项目统一的路径入口。
 
-PZ_DATA 可把数据目录整体挪走（模拟器用），代码本身不关心挪到哪。
+正式版默认使用 ROOT/state；PZ_DATA 可整体挪走，供本机调试。
 """
 
 import os
@@ -11,5 +11,13 @@ DATA = Path(os.environ.get("PZ_DATA") or (ROOT / "state"))
 
 
 def data(*parts):
-    """数据目录下的路径，例如 data("realTime", "events.json")。"""
     return DATA.joinpath(*parts)
+
+
+def realm(*parts):
+    card = os.environ.get("PZ_CARD_ROOT")
+    if card:
+        target = Path(card).joinpath(*parts)
+        if target.exists():
+            return target
+    return (ROOT / "ConsciousnessRealm").joinpath(*parts)

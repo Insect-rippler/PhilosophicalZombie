@@ -3,64 +3,48 @@
     "type": "function",
     "function": {
       "name": "active",
-      "description": "声明角色正在做的一件事。description 说清做什么、对什么、在哪儿；body 判定可执行性与时长。要睡下时加 sleep=true（醒来由生理决定，要定时叫醒请另设 alarm）；需要时用 scene 附带一句环境变化。",
+      "description": "递交一个动作：short 具体动作，long 持续单一的事，event 连续的单一目标。三个槽各自独立；一条 message 只能调一次 active。",
       "parameters": {
         "type": "object",
         "properties": {
-          "description": {
+          "short": {
             "type": "string",
-            "description": "她在做什么，第三人称一句话，例如「她走进厨房烧水煮面」。"
+            "description": "一个具体的短动作，最长 120 秒：起身、推门、递东西、走几步；带 location 时到点改变位置。"
           },
-          "force": {
-            "type": "boolean",
-            "description": "true = 打断她手上正在做的事，改做这件。只在确实要中断时用（例如突然有事必须离开）；平时不要传。"
-          },
-          "slot": {
+          "long": {
             "type": "string",
-            "enum": [
-              "short",
-              "long",
-              "event"
-            ],
-            "description": "三个槽位互相独立，同时只能各放一件。\nshort：几十秒的事（起身、推门、递东西、换个握法），做完立刻腾出来。\nlong：几分钟到几小时、身体腾不出来（做饭、打铁、赶路、洗澡）。\nevent：交给时间的一整段劳动（打一整天铁、守夜到天亮、出趟远门），中途不打断。"
+            "description": "一件持续的、内容单一的事：打盹、守夜、看书、看火。只做这一件，不要打包多件事；必填 location（到点时她应待的地方，不会移动她）。"
+          },
+          "event": {
+            "type": "string",
+            "description": "一个必须连续做完的单一目标：打一整天铁、下坑救人。只写这一个目标，不要拼无关的事；必填 location（同上）。"
+          },
+          "seconds": {
+            "type": "integer",
+            "description": "这一步预计占用的整秒数，必填；short 最长 120 秒。"
           },
           "scene": {
             "type": "string",
-            "description": "可选。这件事发生时的背景：环境变化，或旁人在做什么、说什么。旁人的对白写在这里（如「奥比娜：手腕别硬。」），不要写进正文。正文只留角色自己的台词。"
-          },
-          "appeal": {
-            "type": "object",
-            "description": "可选。觉得**正在执行的那件事**占用时间不合理时申辩：说明理由和你认为它应该用多少分钟，body 决定是否采纳并缩短。",
-            "properties": {
-              "minutes": {
-                "type": "number"
-              },
-              "reason": {
-                "type": "string"
-              }
-            }
-          },
-          "sleep": {
-            "type": "boolean",
-            "description": "要睡下就带 true。醒来时间由生理决定；要定时叫醒请用 alarm 工具。"
-          },
-          "line": {
-            "type": "string",
-            "description": "执行这个动作时角色会说的话（可省略）。写在这里就等于已经说出口、屏幕上已经显示；正文不要再重复它。不想说话就别给 line，要交代画面写进 scene。"
+            "description": "可省略。环境、天气、旁人的动作或对白；天色、日头、光线必须与 <state> 当前时间一致。"
           },
           "location": {
             "type": "string",
-            "description": "这个动作做完之后她在哪，例如「奥格尼斯科/她的房间」；人没挪动就省略。"
+            "description": "short：走到的地点；省略＝原地。long/event：到点时她应处的位置，必填；只校验，不移动她。"
           },
-          "emotion_break": {
+          "force": {
             "type": "boolean",
-            "description": "情绪被锁在分界时用它越过一次。带上它表示她认了这一步，会冷却 6 轮。"
+            "description": "true = 覆盖本次要用的那个槽位，先撤掉该槽里没做完的事。"
+          },
+          "end": {
+            "type": "string",
+            "enum": [
+              "long",
+              "event"
+            ],
+            "description": "提前结束 long 或 event：先按已进行比例结算它，再受理本次动作。"
           }
         },
-        "required": [
-          "description",
-          "slot"
-        ]
+        "required": []
       }
     }
   },
@@ -68,7 +52,7 @@
     "type": "function",
     "function": {
       "name": "fight",
-      "description": "回合制战斗。action=start 用 enemy 指定敌人开打；action=act 用 skill 走一回合。战斗只在遇到敌人时用。",
+      "description": "回合制战斗。action=start 用 enemy 指定敌人开打；action=act 用 skill 走一回合；heal/rescue 处理重伤与救人。战斗只在遇到敌人时用。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -76,9 +60,11 @@
             "type": "string",
             "enum": [
               "start",
-              "act"
+              "act",
+              "heal",
+              "rescue"
             ],
-            "description": "start 开战；act 走一回合。"
+            "description": "start 开战；act 走一回合；heal 处理重伤；rescue 救人。"
           },
           "enemy": {
             "type": "string",
@@ -591,6 +577,7 @@
               "list",
               "add",
               "step_done",
+              "step_drop",
               "revise",
               "pause",
               "resume",
@@ -609,9 +596,30 @@
           "steps": {
             "type": "array",
             "items": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "fallback": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                }
+              ]
             },
-            "description": "add 时的步骤列表。"
+            "description": "add 时的步骤；可用字符串，或 {title, fallback}。revise 整体替换，配合 step 只替换那一步。"
           },
           "step": {
             "type": "integer",
@@ -619,11 +627,12 @@
           },
           "note": {
             "type": "string",
-            "description": "备注：为什么改、为什么放弃、这一步做成了什么。"
+            "description": "必填：为什么改 / 为什么放弃 / 这一步做成了什么；list 也要说明为什么查。"
           }
         },
         "required": [
-          "action"
+          "action",
+          "note"
         ]
       }
     },
@@ -648,6 +657,122 @@
         },
         "required": [
           "seconds"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "emotion",
+      "description": "情绪锁在分界上时（state 会写）越过一次：break=true + reason。它让下一次情绪变化越过锁，不是当场改数值。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "break": {
+            "type": "boolean",
+            "description": "true 表示这次要越过情绪锁。"
+          },
+          "reason": {
+            "type": "string",
+            "description": "为什么越过，一句话，写进日志与 state。"
+          }
+        },
+        "required": [
+          "break",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "line",
+      "description": "说出台词。默认不结束这一轮；final=true 时，单独一条 line 会像 short 一样收口，不再触发下一次唤醒。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "她说出口的话。"
+          },
+          "final": {
+            "type": "boolean",
+            "description": "true = 这一句说完就收口，不再触发下一次唤醒；同条还有其它工具时，仍按其它工具唤醒。"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pause",
+      "description": "short 还在跑、这一拍没有别的事：暂停本轮，不推进时间。只在 short 槽非空时受理；short 空时不要用它代替结束。",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sleep",
+      "description": "切换为睡眠状态。第一次调用只回确认（预计睡多久、几点醒）；5 分钟内再调一次才入睡。醒来由生理或闹钟决定。",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "map",
+      "description": "她的地图。action=query 查当前地点到 target 的前三条路线；action=create 用 target/risk/time 新建相邻节点并连到当前地点；action=link 用 target/link/time 新建或修改两地连线。日常只有这三种；dream 才开放 unlink/set_risk/delete/merge。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "query",
+              "create",
+              "link",
+              "unlink",
+              "set_risk",
+              "delete",
+              "merge"
+            ],
+            "description": "query 查询；create 新建节点并连到当前；link 建/改连线；其余仅 dream。"
+          },
+          "target": {
+            "type": "string",
+            "description": "目标地点；create 时是新节点名。"
+          },
+          "risk": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3,
+            "description": "0 安全 / 1 正常 / 2 警戒 / 3 危险；create 时必填。"
+          },
+          "link": {
+            "type": "string",
+            "description": "另一个地点；link/unlink/merge 时用。"
+          },
+          "time": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "两地之间的预估秒数；create/link 时必填。"
+          }
+        },
+        "required": [
+          "action"
         ]
       }
     }

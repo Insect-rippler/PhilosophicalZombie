@@ -98,7 +98,7 @@ for i, P in enumerate(pathList):
     if matchMode == "name":
         if regex.search(str(P)):
             if P.is_dir() and list(Path(P).glob("*")):
-                result.append(f"{P} [INFO] 该路径存在子路径或文件，但受限于maxDepth值未显示。")
+                result.append(f"{P} [WARN] 该路径存在子路径或文件，但受限于maxDepth值未显示。")
             elif P.is_file():
                 result.append(str(P))
             else:result.append(f"{P} [INFO] 该路径为空路径，无子路径或文件。")
@@ -134,7 +134,7 @@ for i, P in enumerate(pathList):
         elif P.is_dir():
             if regex.search(str(P)):
                 if P.is_dir() and list(Path(P).glob("*")):
-                    result.append(f"{P} [INFO] 该路径存在子路径或文件，但受限于maxDepth值未显示。")
+                    result.append(f"{P} [WARN] 该路径存在子路径或文件，但受限于maxDepth值未显示。")
                 elif P.is_file():
                     result.append(str(P))
                 else:result.append(f"{P} [INFO] 该路径为空路径，无子路径或文件。")
@@ -144,7 +144,7 @@ for i, P in enumerate(pathList):
         else:over += 1
 if truncated:
     result.append(
-        f"[INFO] 已达 maxList 上限，剩余 {truncated} 个路径未列出，结果不完整；"
+        f"[WARN] 已达 maxList 上限，剩余 {truncated} 个路径未列出，结果不完整；"
         "如需完整结果，请缩小 paths 或改用更精确的 pattern 重新调用。"
     )
 if result:

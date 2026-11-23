@@ -13,6 +13,8 @@
 """
 
 import json
+import queue
+import re as _re
 import paths as _paths
 import time
 
@@ -32,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
 
 import body
+import vclock
 import core
 import runlog
 import modelio
@@ -55,7 +58,9 @@ def describe_tool(name, args, result):
     """工具调用 → (类型, 文本)。active 是旁白，其余是系统提示。"""
     if name == "active":
         try:
-            desc = json.loads(args).get("description") if isinstance(args, str) else ""
+            data = json.loads(args) if isinstance(args, str) else {}
+            desc = (data.get("short") or data.get("long") or data.get("event")
+                    or data.get("description") or "")
         except json.JSONDecodeError:
             desc = ""
         return "narration", desc or "她动了一下"
@@ -65,14 +70,14 @@ def describe_tool(name, args, result):
         return "tip", "记下了一件事"
     if name == "plan":
         return "tip", "整理了目标"
+    if name == "pause":
+        return "tip", "暂停一拍"
     return "tip", name
 
 
 
 
-INJECTED_TAGS = ("<memory_momentary>", "<lorebook_momentary>", "<skill_knowledge>",
-                 "<state>", "<plan>", "<user>", "<assistant>",
-                 "<impression>", "<appearance>")
+INJECTED_TAGS = core.CONTEXT_TAGS
 
 
 def strip_context_leak(text):
@@ -85,6 +90,32 @@ def strip_context_leak(text):
     if cut == 0:
         return ""
     return text
+
+
+PSEUDO_KEY = _re.compile(r"^(description|slot|short|long|event|seconds|end|scene|location|force)\s*[:=]", _re.I)
+
+
+def strip_pseudo_call(text):
+    """兜底失败时，把残留的伪调用清理掉，避免写进 session。"""
+    if not text:
+        return text
+    out, inside = [], False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("<active") or s.startswith("<scene"):
+            inside = ">" not in s[1:] or not s.endswith(">")
+            if "</active>" in s or "</scene>" in s:
+                inside = False
+            continue
+        if s.startswith("</active") or s.startswith("</scene"):
+            inside = False
+            continue
+        if inside:
+            continue
+        if PSEUDO_KEY.match(s):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def tool_failed(output):
@@ -100,7 +131,19 @@ def tool_failed(output):
     return bool(str(data.get("未执行") or "").strip())
 
 
-def run_with_tools(payload, emit):
+def looks_narration(text):
+    """没有工具调用，正文却像动作或参数：判定为通道泄漏。"""
+    text = str(text or "")
+    if not text.strip():
+        return False
+    if _re.search(r"(short|long|event|seconds)\s*[:=]", text):
+        return True
+    stripped = _re.sub(r"[「“\"][^」”\"]*[」”\"]", "", text)
+    if _re.search(r"(^|[。！？\n]\s*)她", stripped):
+        return True
+
+
+def run_with_tools(payload, emit, stream_id=None):
     """跑一轮（含工具）。返回 (是否已经产出结果, 最终文本)。
 
     第一轮也走流式；一旦出现 tool_calls，就执行工具、把结果写回 session，
@@ -117,109 +160,98 @@ def run_with_tools(payload, emit):
     last_text = ""
     spoken_line = ""
     pending_text = ""
+    last_reject = {}
+    pause_called = False
+    active_seen = False
+    accepted_slot = ""
+
+    streamed = False
+
+    def on_delta(piece):
+        nonlocal streamed
+        streamed = True
+        emit("delta", piece)
 
     def emit_pending():
-        if not pending_text.strip():
+        if not pending_text.strip() or streamed:
             return
         # 出口再兜一层：参数写成文字的，绝不进正文
         clean, _ = salvage_text_call(pending_text)
-        emit("delta", clean)
+        emit("delta", strip_pseudo_call(clean))
     echo = EchoStrip()
     registry = tools.load_registry()        # 一轮只读一次
 
+    run_with_tools.hit_cap = False
     rounds = max(1, int(core.LOOP_MAX))       # 上限统一读 harness.loop.maxRounds
+    echo = EchoStrip()
     for _round in range(rounds):
+        active_seen = False
+        active_background = False
+        line_final = False                   # 每条 message 重新计数，不是每轮 loop 累计
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
             body["thinking"] = {"type": "disabled"}
-        calls, content_parts, usage = [], [], None
-        reasoning_parts = []
-        salvage = Salvager()
-        failure = ""
+
+        reply = None
+        _real_t0 = vclock.real_now()
+        streamed = False
         for _attempt in range(3):
-            calls, content_parts, usage = [], [], None
-            reasoning_parts = []
-            salvage = Salvager()
-            buffered = []
-            import time as _sys_t
-            _stream_at = _sys_t.time()
-            try:
-                with requests.post(
-                    core.chat_completions_url,
-                    headers={"Authorization": f"Bearer {core.API_KEY}",
-                             "Content-Type": "application/json"},
-                    json=body, stream=True, timeout=(15, 600),
-                    verify=core.VERIFY_SSL, proxies={"http": None, "https": None},
-                ) as response:
-                    if response.status_code != 200:
-                        raise RuntimeError(f"status {response.status_code}: "
-                                           f"{response.text[:300]}")
-                    for raw in response.iter_lines(decode_unicode=False):
-                        if not raw:
-                            continue
-                        line = raw.decode("utf-8", "replace")
-                        if not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        if chunk.get("usage"):
-                            usage = chunk["usage"]
-                        for choice in chunk.get("choices") or []:
-                            delta = choice.get("delta") or {}
-                            if delta.get("tool_calls"):
-                                for call in delta["tool_calls"]:
-                                    idx = call.get("index", len(calls))
-                                    while len(calls) <= idx:
-                                        calls.append({"id": "", "type": "function",
-                                                      "function": {"name": "", "arguments": ""}})
-                                    slot = calls[idx]
-                                    if call.get("id"):
-                                        slot["id"] = call["id"]
-                                    fn = call.get("function") or {}
-                                    slot["function"]["name"] += fn.get("name") or ""
-                                    slot["function"]["arguments"] += fn.get("arguments") or ""
-                            thought = delta.get("reasoning_content")
-                            if thought:
-                                reasoning_parts.append(thought)
-                            piece = delta.get("content")
-                            if piece:
-                                content_parts.append(piece)
-                                visible, events = salvage.feed(piece)
-                                visible = echo.feed(visible)
-                                if visible:
-                                    buffered.append(visible)      # 先攒着，动作展示完再放
-                                for event in events:
-                                    emit("tool", event)
-                failure = ""
-                runlog.log("stream.ok", ms=int((_sys_t.time()-_stream_at)*1000),
-                           round=_round + 1, calls=len(calls),
-                           chars=sum(len(x) for x in content_parts))
+            reply = modelio.stream(body, on_delta=on_delta)
+            if reply:
                 break
-            except Exception as exc:             # noqa: BLE001
-                failure = f"{type(exc).__name__}: {exc}"
-                runlog.log("stream.fail", ms=int((_sys_t.time()-_stream_at)*1000),
-                           round=_round + 1, attempt=_attempt + 1,
-                           error=failure[:200])
-                log("request.retry", round=_round + 1, attempt=_attempt + 1,
-                    error=failure[:120])
-                if _attempt < 2:
-                    time.sleep(1.2 * (_attempt + 1))
-        if failure:
-            log("request.failed", round=_round + 1, error=failure[:160])
+            time.sleep(1.2 * (_attempt + 1))
+        _real_elapsed = vclock.real_now() - _real_t0
+        vclock.advance_seconds(_real_elapsed)
+        core.record_latency(_real_elapsed)
+        if not reply:
+            log("request.failed", round=_round + 1)
             return False, ""
 
-        rest = echo.close()
-        if rest.strip():
-            buffered.append(rest)
-        tail, tail_events = salvage.flush()
-        if tail.strip():
-            buffered.append(tail)
-        for event in tail_events:
-            emit("tool", event)
+        message = ((reply.get("choices") or [{}])[0].get("message") or {})
+        content = str(message.get("content") or "")
+        calls = message.get("tool_calls") or []
+        reasoning = str(message.get("reasoning_content") or "")
+        reasoning_parts = [reasoning] if reasoning else []
+        usage = reply.get("usage")
+
+        # 通道泄漏：没有工具调用，正文却写成动作/参数 → 重新请求一次
+        if not calls and looks_narration(content):
+            nudge = {"role": "user", "name": "retry",
+                     "content": "（上一条回复把动作写进了正文，没有走工具通道。"
+                                "请重新回复：动作走 active，台词走 line，"
+                                "正文只写她说出口的话。）"}
+            retry_body = dict(body, messages=list(body["messages"]) + [nudge])
+            retry_body["stream"] = False
+            retry_body.pop("stream_options", None)
+            again = modelio.send(retry_body)
+            if again:
+                msg2 = ((again.get("choices") or [{}])[0].get("message") or {})
+                text2 = str(msg2.get("content") or "")
+                calls2 = msg2.get("tool_calls") or []
+                if calls2 or not looks_narration(text2):
+                    message, content, calls = msg2, text2, calls2
+                    reasoning = str(msg2.get("reasoning_content") or "")
+                    reasoning_parts = [reasoning] if reasoning else []
+                    usage = again.get("usage")
+                    log("retry.narration", round=_round + 1, ok=bool(calls2))
+
+        if usage:
+            try:
+                rec = modelio.record_usage(usage, round_no=_round + 1)
+                emit("usage", {"round": _round + 1,
+                               "prompt": rec["prompt"],
+                               "completion": rec["completion"],
+                               "cache": rec["cache_rate"],
+                               "avg": average_cache(usage_window()),
+                               "ratio": round(100 * rec["prompt"]
+                                              / max(1, core.COMPRESSION_THRESHOLD), 2),
+                               "window": usage_window()})
+            except Exception:                # noqa: BLE001
+                pass
+
+        visible = echo.feed(content)
+        buffered = [visible] if visible.strip() else []
+        last_text = content
+        echo.remember(last_text)
         pending_text = "".join(buffered)
         cleaned = strip_context_leak(pending_text)
         if cleaned != pending_text:
@@ -240,22 +272,31 @@ def run_with_tools(payload, emit):
             except Exception:                # noqa: BLE001
                 pass
 
-        last_text = "".join(content_parts)
+        last_text = content
         echo.remember(last_text)
 
         # 模型把 active 的参数写成了正文：把它当一次调用捡回来
         if not calls:
             cleaned_text, salvaged = salvage_text_call(pending_text)
-            if salvaged and salvaged.get("description"):
+            if salvaged:
+                if not any(str(salvaged.get(k) or "").strip()
+                           for k in ("short", "long", "event")):
+                    legacy = str(salvaged.get("description") or "").strip()
+                    if legacy:
+                        salvaged["short"] = legacy
+            if salvaged and any(str(salvaged.get(k) or "").strip()
+                                for k in ("short", "long", "event")):
                 pending_text = cleaned_text
                 buffered = [cleaned_text]
                 args = {k: v for k, v in salvaged.items()}
+                args.pop("description", None)
+                args.pop("slot", None)
                 if args.get("force") in ("true", "True", "1"):
                     args["force"] = True
                 if args.get("sleep") in ("true", "True", "1"):
                     args["sleep"] = True
-                if not args.get("slot"):
-                    args["slot"] = "short"
+                if not str(args.get("seconds") or "").strip():
+                    args["seconds"] = "10"
                 calls = [{"id": "salvaged-1", "type": "function",
                           "function": {"name": "active",
                                        "arguments": json.dumps(args, ensure_ascii=False)}}]
@@ -267,22 +308,57 @@ def run_with_tools(payload, emit):
                 return True, ""
             run_with_tools.reasoning = "".join(reasoning_parts)
             clean_text, _ = salvage_text_call(pending_text)
+            clean_text = strip_pseudo_call(clean_text)
+            if clean_text.strip():
+                row = {"role": "assistant", "content": clean_text}
+                if reasoning_parts:
+                    row["reasoning_content"] = "".join(reasoning_parts)
+                core.append_session([row])
             return True, clean_text
 
 
+        # 固定执行顺序：active(scene→动作) → line → 其它工具
+        _order = {"active": 0, "line": 1}
+        calls = [c for _, c in sorted(
+            enumerate(calls),
+            key=lambda pair: (_order.get(
+                ((pair[1].get("function") or {}).get("name") or ""), 2), pair[0]))]
+
         assistant = {"role": "assistant",
-                 "content": strip_context_leak("".join(content_parts))}
+                 "content": strip_pseudo_call(strip_context_leak(content))}
         if reasoning_parts:
             assistant["reasoning_content"] = "".join(reasoning_parts)
         assistant["tool_calls"] = calls
         results = []
+
+        def record_tool(row):
+            results.append(row)
+            core.append_session([row])
+
+        core.append_session([assistant])
         for call in calls:
             name = (call.get("function") or {}).get("name") or ""
             name, args = name, (call.get("function") or {}).get("arguments") or "{}"
             runlog.log("tool.begin", name=name,
                        chars=len(str((call.get("function") or {}).get("arguments") or "")))
+            if name == "active":
+                if active_seen:
+                    record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
+                                 "content": json.dumps(
+                                     {"未执行": "未受理：一条 message 只受理第一个 active；这个已丢弃。",
+                                      "ok": False}, ensure_ascii=False)})
+                    continue
+                active_seen = True
+
             output = tools.execute_tool_call(call, registry)
             runlog.log("tool.done", name=name, out=len(str(output)))
+            if name == "pause" and not tool_failed(output):
+                pause_called = True
+            if name == "active" and tool_failed(output):
+                try:
+                    last_reject = {"args": json.loads(args), "call_id": call.get("id")}
+                except (json.JSONDecodeError, TypeError):
+                    pass
             # 被代码拒绝的动作不画，但「话」照说——她张嘴了，只是事情没做成
             if tool_failed(output):
                 try:
@@ -293,17 +369,12 @@ def run_with_tools(payload, emit):
                 if spoken:
                     spoken_line = (spoken_line + spoken) if spoken_line else spoken
                     emit("tool", {"kind": "line", "name": name, "text": spoken})
-                results.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                                 "content": output})
                 continue
 
-            scene = said = None
+            scene = None
             if name == "active":
-                try:
-                    parsed = json.loads(output)
-                except (json.JSONDecodeError, AttributeError):
-                    parsed = {}
-                said = parsed.get("line")
                 try:
                     scene = json.loads(args).get("scene")
                 except (json.JSONDecodeError, AttributeError):
@@ -313,22 +384,48 @@ def run_with_tools(payload, emit):
             kind, label = describe_tool(name, args, output)
             if name == "active":
                 emit("tool", {"kind": "action", "name": name, "text": label})   # 2 动作
-            else:
+            elif name != "line":
                 emit("tool", {"kind": kind, "name": name, "text": label})
-            if isinstance(said, str) and said.strip():        # 3 动作时说的话
-                said = said.strip()
-                spoken_line = (spoken_line + said) if spoken_line else said
-                emit("tool", {"kind": "line", "name": name, "text": said})
-            results.append({"role": "tool", "tool_call_id": call.get("id", ""),
+            if name == "line":
+                try:
+                    la = json.loads(args) if isinstance(args, str) else {}
+                except json.JSONDecodeError:
+                    la = {}
+                said2 = str(la.get("text") or "").strip()
+                if said2:
+                    spoken_line = (spoken_line + said2) if spoken_line else said2
+                    emit("tool", {"kind": "line", "name": "line", "text": said2})
+                    if la.get("final") is True or str(la.get("final")).lower() in ("true", "1"):
+                        line_final = True
+            if name == "active" and not tool_failed(output):
+                try:
+                    _a = json.loads(args) if isinstance(args, str) else {}
+                except json.JSONDecodeError:
+                    _a = {}
+                accepted_slot = next((k for k in ("short", "long", "event")
+                                      if str(_a.get(k) or "").strip()), "")
+                active_background = (accepted_slot == "short")
+            record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
 
         emit_pending()                     # 先动作，后台词
-        core.append_session([assistant] + results)
+        if line_final and len(calls) == 1:
+            # 单独一条 final line：像单独 short 一样收口，不触发下一次唤醒。
+            break
+        if pause_called:
+            break
+        if active_background and len(calls) == 1:
+            # 只有「单独一个 short」受理后才结束本轮；
+            # short + line / map / plan 等由其它工具继续 loop。
+            break
         payload = core.context_assemble(record=False)     # 工具轮不重复记召回
         body = dict(payload)
-        body["stream"] = True
-        body["stream_options"] = {"include_usage": True}
+        body["stream"] = False
+        body.pop("stream_options", None)
 
+
+    else:
+        run_with_tools.hit_cap = True
 
     if not last_text and not spoken_line and not calls:   # 真的什么都没产出，才补救
         log("fallback.plain", round=rounds)
@@ -343,7 +440,7 @@ def run_with_tools(payload, emit):
                 m for m in plain.get("messages") or []
                 if not (m.get("role") == "assistant" and m.get("tool_calls"))
             ] + [{"role": "system",
-                  "content": "只输出角色这一轮说出口的一句话。不要旁白、不要括号、不要解释。"}]
+                  "content": "只输出角色这一轮说出口的话。不要旁白、不要括号、不要解释。"}]
             response = modelio.send(plain)
             if response:
                 text = ((response.get("choices") or [{}])[0]
@@ -400,14 +497,25 @@ def session_history(limit=40, with_total=False):
                     if "未执行" in receipt or '"ok": false' in receipt:
                         continue
                     scene = str(args.get("scene") or "").strip()
-                    desc = str(args.get("description") or "").strip()
-                    said = str(args.get("line") or "").strip()
+                    desc = next((str(args.get(k) or "").strip()
+                                 for k in ("short", "long", "event")
+                                 if str(args.get(k) or "").strip()), "")
+                    said = ""
                     if scene:
                         rows.append({"role": "scene", "text": scene,
                                      "ts": item.get("ts") or ""})
                     if desc:
                         rows.append({"role": "narration", "text": desc,
                                      "ts": item.get("ts") or ""})
+                    if said:
+                        rows.append({"role": "line", "text": said,
+                                     "ts": item.get("ts") or ""})
+                elif name == "line":
+                    try:
+                        args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    said = str(args.get("text") or "").strip()
                     if said:
                         rows.append({"role": "line", "text": said,
                                      "ts": item.get("ts") or ""})
@@ -489,13 +597,24 @@ NOISE = _re.compile(r"<[^>]*DSML[^>]*>|</\s*(active|scene)\s*>|<\s*\|\|?[^>]*>",
 #   description="她推开门" slot="short" line="进来吧。"
 # 这里把它们捡回来，当成一次真正的 active 调用。
 TEXT_CALL = _re.compile(
-    r'(description|slot|line|scene|force|sleep|location)\s*=\s*'
+    r'(description|slot|short|long|event|seconds|end|scene|force|sleep|location)\s*=\s*'
     r'(?:"([^"\n]*)"|\'([^\'\n]*)\')', _re.S)
+
+
+SLOT_LINE = _re.compile(r"^\s*(short|long|event)\s*$", _re.M)
+COLON_CALL = _re.compile(
+    r'^\s*(description|slot|short|long|event|seconds|end|scene|location)\s*[:：]\s*["“]?(.+?)["”]?\s*$', _re.M)
+TAG_CALL = _re.compile(r"<\s*active\b([^>]*)>", _re.S)
+ATTR = _re.compile(r'(\w+)\s*=\s*["“]([^"”]*)["”]')
 
 
 def salvage_text_call(text):
     """从正文里捡出被写成文字的 active 参数。
 
+    支持三种写法：
+        key="value" 或 key='value'
+        key: value（一行一个）
+        <active description="…" slot="short" …>
     返回 (清理后的正文, 参数字典或 None)。至少要有 description 才认。
     """
     if not text:
@@ -503,8 +622,25 @@ def salvage_text_call(text):
     found = {}
     for key, dq, sq in TEXT_CALL.findall(text):
         found[key] = dq or sq
+
+    if not found:
+        for match in TAG_CALL.finditer(text):
+            for key, value in ATTR.findall(match.group(1)):
+                found[key] = value
+        if found:
+            text = TAG_CALL.sub("", text)
+
+    if not found:
+        for match in COLON_CALL.finditer(text):
+            found[match.group(1)] = match.group(2).strip().strip("\"'“”")
+        if found:
+            text = COLON_CALL.sub("", text)
+
     if not found:
         return text, None
+
+    text = SLOT_LINE.sub("", text)
+    text = _re.sub(r"<\s*/?\s*(active|scene)[^>]*>", "", text)
     cleaned = TEXT_CALL.sub("", text)
     cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines())
     cleaned = "\n".join(l for l in cleaned.splitlines() if l.strip())
@@ -561,8 +697,12 @@ class Salvager:
             name = tag.group(1)
             attrs = tag.group(2) or ""
             desc = ATTR_DESC.search(attrs)
+            if not desc:
+                # 只有 <active> 外壳、参数写在后面的行里：
+                # 不发旁白，留给 salvage_text_call 当真实调用处理
+                return found
             found.append({"kind": "narration", "name": name,
-                          "text": desc.group(1) if desc else ""})
+                          "text": desc.group(1)})
             return found
         return found
 
@@ -574,8 +714,10 @@ class Salvager:
             return text, events
         for match in DSML_CALL.finditer(rest):
             desc = DSML_PARAM.search(rest)
+            if not desc:
+                continue
             events.append({"kind": "narration", "name": match.group(1),
-                           "text": desc.group(1).strip() if desc else ""})
+                           "text": desc.group(1).strip()})
         text = NOISE.sub("", rest)
         text = TAG_ACTION.sub("", text).strip()
         if events and text:                    # 描述常跟在标签后面
@@ -810,25 +952,28 @@ def idle_tick():
     kick_maintenance()
     timers.tick_lock()
     try:
-        try:
-            import events as _events
-            _events.mark_user()
-        except Exception:            # noqa: BLE001
-            pass
         body.observe()            # 先把对方这一轮做的事结算掉
     except Exception as exc:      # noqa: BLE001
         log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
+    core.USER_LOOP = False
     payload = core.context_assemble()
+    stream_id = f"idle-{int(_tt.time() * 1000)}"
     chunks = []
-    _, final_text = run_with_tools(
-        payload, lambda kind, value: chunks.append(value) if kind == "delta" else None)
-    reply = (final_text or "").strip()
-    if reply:
-        record = {"role": "assistant", "content": reply}
-        thought = getattr(run_with_tools, "reasoning", "") or ""
-        if thought:
-            record["reasoning_content"] = thought
-        core.append_session([record])
+    def idle_emit(kind, value):
+        if kind == "delta":
+            chunks.append(value)
+            publish_stream(stream_id, str(value))
+        elif kind == "tool":
+            publish_tool(value)
+        elif kind == "error":
+            publish_error(str(value))
+    try:
+        _, final_text = run_with_tools(payload, idle_emit, stream_id=stream_id)
+        reply = (final_text or "").strip()
+        publish_stream_done(stream_id, reply)
+    except Exception as exc:                 # noqa: BLE001
+        publish_error(f"{type(exc).__name__}: {exc}")
+        reply = ""
     runlog.log("turn.end", kind="idle", ms=int((_tt.time()-_t0)*1000),
                reply=len(reply), chunks=len(chunks))
     return 1 if reply else 0
@@ -888,6 +1033,194 @@ REALM_FILES = ("PERSONA.md", "CHARACTER.md", "AGENT.md",
                "MEMORY.md", "LOREBOOK.md", "USER.md")
 
 
+VIEW_LOCK = threading.Lock()
+VIEW_REV = 0
+VIEW_CACHE = None
+VIEW_SUBSCRIBERS = []
+SUB_LOCK = threading.Lock()
+
+
+def _timer_view():
+    """选当前最近到期的计时器：动作 / 闹钟 / 静默。"""
+    now = time.time()
+    ch = timers.load_character()
+    sleeping = (ch.get("state") or {}).get("active") == "sleep"
+    cands = []
+    for t in timers.load_timers():
+        try:
+            at = float(t.get("at") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not at:
+            continue
+        is_alarm = bool(t.get("alarm"))
+        slot = str(t.get("slotId") or t.get("slot") or "").strip()
+        kind = "alarm" if is_alarm else ("silence" if slot == "silence" else (slot or "action"))
+        label = str(t.get("text") or "").strip()
+        if is_alarm:
+            label = label or "闹钟"
+        elif not label:
+            label = "动作" if not slot else slot
+        prio = 0 if is_alarm else (1 if slot in ("short", "long", "event", "action") else 2)
+        if at > now - 1:
+            cands.append((at, prio, 0, {
+                "id": f"{kind}:{t.get('id') or int(at * 1000)}",
+                "kind": kind, "label": label, "endsAt": at,
+                "remainingMs": max(0, int(round((at - now) * 1000))),
+                "graceMs": 200,
+            }))
+    if not sleeping and last_activity_at():
+        enabled, minutes = idle_settings()
+        if enabled:
+            at = float(last_activity_at()) + minutes * 60
+            if at > now - 1:
+                cands.append((at, 2, 1, {
+                    "id": "silence", "kind": "silence", "label": "静默",
+                    "endsAt": at,
+                    "remainingMs": max(0, int(round((at - now) * 1000))),
+                    "graceMs": 200,
+                }))
+    if not cands:
+        return None
+    return sorted(cands, key=lambda x: (x[0], x[1], x[2]))[0][3]
+
+
+def _usage_text():
+    try:
+        data = last_usage() or {}
+    except Exception:                        # noqa: BLE001
+        return "usage —"
+    if not data:
+        return "usage —"
+
+    def num(value):
+        value = int(value or 0)
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.3f}M"
+        if value >= 10_000:
+            return f"{value / 1000:.1f}k"
+        return str(value)
+
+    return (f"输入 {num(data.get('prompt'))}   输出 {num(data.get('completion'))}   "
+            f"平均命中 {data.get('avg', 0):.0f}%   单次命中 {data.get('cache', 0):.0f}%   "
+            f"已用上下文 {data.get('ratio', 0):.1f}%")
+
+
+def _view_messages():
+    try:
+        rows = session_history(400)
+    except Exception:                        # noqa: BLE001
+        rows = []
+    out = []
+    tips = None
+    for idx, row in enumerate(rows):
+        role = str(row.get("role") or "")
+        text = str(row.get("text") or "").strip()
+        ts = str(row.get("ts") or "")
+        if not text and role != "tip":
+            continue
+        if role == "tip":
+            if tips is None:
+                tips = {"id": f"tip-{idx}", "kind": "tip", "items": [], "ts": ts}
+                out.append(tips)
+            tips["items"].append({"name": row.get("name") or "tool", "text": text})
+            continue
+        tips = None
+        if role in ("narration", "scene", "action", "line", "user", "assistant"):
+            kind = role
+        else:
+            kind = str(row.get("role") or "narration")
+        out.append({"id": f"m{idx}", "kind": kind, "text": text, "ts": ts})
+    return out
+
+
+def build_view():
+    """主会话的完整只读视图；前端只渲染这个对象。"""
+    ch = timers.load_character()
+    state = ch.get("state") or {}
+    metab = ch.get("metabolism") or {}
+    status = "睡着" if state.get("active") == "sleep" else "醒着"
+    return {
+        "rev": VIEW_REV,
+        "serverNow": time.time(),
+        "messages": _view_messages(),
+        "timer": _timer_view(),
+        "state": {
+            "location": str(ch.get("local") or "未知"),
+            "status": status,
+            "metabolismText": "　".join(
+                f"{name} {float(metab.get(key, 0)):.0f}"
+                for name, key in (("饱食", "satiety"), ("水分", "hydration"),
+                                  ("疲劳", "fatigue"), ("困意", "sleepiness"))
+            ),
+        },
+        "usage": {"text": _usage_text()},
+        "plan": [],
+    }
+
+
+def publish_view():
+    """重算并推给所有 /events 订阅者。"""
+    global VIEW_REV, VIEW_CACHE
+    with VIEW_LOCK:
+        VIEW_REV += 1
+        VIEW_CACHE = build_view()
+        view = VIEW_CACHE
+    with SUB_LOCK:
+        dead = []
+        for q in VIEW_SUBSCRIBERS:
+            try:
+                q.put_nowait(("view", view))
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            try:
+                VIEW_SUBSCRIBERS.remove(q)
+            except ValueError:
+                pass
+    return view
+
+
+def publish_event(kind, payload):
+    """把单个流事件发给所有订阅者。"""
+    with SUB_LOCK:
+        dead = []
+        for q in VIEW_SUBSCRIBERS:
+            try:
+                q.put_nowait((kind, payload))
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            try:
+                VIEW_SUBSCRIBERS.remove(q)
+            except ValueError:
+                pass
+
+
+def publish_stream(stream_id, delta):
+    publish_event("stream", {"id": stream_id, "delta": delta})
+
+
+def publish_stream_done(stream_id, text):
+    publish_event("done", {"id": stream_id, "text": text})
+
+
+def publish_tool(payload):
+    publish_event("tool", payload)
+
+
+def publish_error(message):
+    publish_event("error", {"message": message})
+
+
+def current_view():
+    global VIEW_CACHE
+    with VIEW_LOCK:
+        if VIEW_CACHE is None:
+            VIEW_CACHE = build_view()
+        return VIEW_CACHE
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -921,6 +1254,19 @@ class Handler(BaseHTTPRequestHandler):
                 limit = 40
             rows, total = session_history(limit, with_total=True)
             return self._json({"messages": rows, "total": total})
+        if path == "/session":
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                since = int((query.get("since") or [""])[0] or 0) or None
+                tail = int((query.get("tail") or ["200"])[0])
+            except ValueError:
+                since, tail = None, 200
+            rev, rows = core.read_snapshot(tail=tail, since=since)
+            if rows is None:
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self._json({"rev": rev, "rows": rows})
         if path == "/skill":
             return self._json(skill_text())
         if path == "/usage":
@@ -931,6 +1277,10 @@ class Handler(BaseHTTPRequestHandler):
                                "result": job.get("result")}
                         for name, job in JOBS.items()}
             return self._json({"available": MANUAL, "jobs": data})
+        if path == "/view":
+            return self._json(build_view())
+        if path == "/events":
+            return self._events()
         if path == "/state":
             return self._json(state_snapshot())
         if path == "/config":
@@ -954,6 +1304,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        if path == "/sync":
+            return self._sync(self._body())
         if path == "/turn":
             return self._turn(self._body())
         if path == "/action":
@@ -978,44 +1330,104 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "chars": len(text)})
         self._json({"error": "not found"}, 404)
 
+    def _events(self):
+        """SSE：先给完整 view，之后只推后端重算的 view。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        q = queue.Queue(maxsize=512)
+        with SUB_LOCK:
+            VIEW_SUBSCRIBERS.append(q)
+        try:
+            first = build_view()
+            self._sse("view", first)
+            while True:
+                try:
+                    kind, payload = q.get(timeout=15)
+                except queue.Empty:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    continue
+                self._sse(kind, payload)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with SUB_LOCK:
+                try:
+                    VIEW_SUBSCRIBERS.remove(q)
+                except ValueError:
+                    pass
+            self.close_connection = True
+
+    def _sse(self, kind, value):
+        chunk = f"event: {kind}\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
+        self.wfile.write(chunk.encode("utf-8"))
+        self.wfile.flush()
+
+    def _sync(self, data):
+        with LOCK:
+            try:
+                timers.advance()
+                timers.settle()
+            except Exception:                # noqa: BLE001
+                pass
+            view = publish_view()
+        return self._json({"rev": view.get("rev"), "view": view})
+
     def _turn(self, data):
         text = str(data.get("text") or "").strip()
         if not text:
             return self._json({"error": "text 不能为空"}, 400)
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "close")
-        self.end_headers()
-
-        def emit(kind, value):
-            chunk = f"event: {kind}\ndata: {json.dumps(value, ensure_ascii=False)}\n\n"
-            self.wfile.write(chunk.encode("utf-8"))
-            self.wfile.flush()
-
-        print(f"[turn] 收到：{text[:30]}", flush=True)
-        with LOCK:
+        if not LOCK.acquire(blocking=False):
+            return self._json({"error": "上一轮还没结束"}, 409)
+        try:
             core.append_session([{"role": "user",
                                   "name": core.payload.get("user_id", ""),
                                   "content": text}])
             try:
-                payload = core.context_assemble()
-                ok, reply_raw = run_with_tools(payload, emit)
-                reply = (reply_raw or "").strip()
-            except Exception as e:           # noqa: BLE001
-                import traceback
-                traceback.print_exc()
-                emit("error", f"{type(e).__name__}: {e}")
-                reply = ""
-            if reply:
-                done_msg = {"role": "assistant", "content": reply}
-                reasoning = getattr(run_with_tools, "reasoning", "")
-                if reasoning:
-                    done_msg["reasoning_content"] = reasoning
-                core.append_session([done_msg])
-            emit("done", reply)
-        self.close_connection = True
+                import events as _events
+                _events.mark_user()
+            except Exception:                 # noqa: BLE001
+                pass
+            publish_view()
+            threading.Thread(target=self._run_turn_locked, args=(text,),
+                             daemon=True).start()
+        except Exception as exc:              # noqa: BLE001
+            LOCK.release()
+            return self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+        return self._json({"ok": True, "accepted": True}, 202)
+
+    def _run_turn_locked(self, text):
+        stream_id = f"turn-{int(time.time() * 1000)}"
+        def emit(kind, value):
+            if kind == "delta":
+                publish_stream(stream_id, str(value))
+            elif kind == "tool":
+                publish_tool(value)
+            elif kind == "error":
+                publish_error(str(value))
+        try:
+            try:
+                body.observe()
+            except Exception as exc:          # noqa: BLE001
+                log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
+            core.USER_LOOP = True
+            payload = core.context_assemble()
+            _, reply = run_with_tools(payload, emit, stream_id=stream_id)
+            publish_stream_done(stream_id, str(reply or ""))
+        except Exception as exc:              # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            publish_error(f"{type(exc).__name__}: {exc}")
+        finally:
+            core.USER_LOOP = False
+            publish_view()
+            try:
+                LOCK.release()
+            except RuntimeError:
+                pass
 
     def _save_skill(self, data):
         items = data.get("items")
@@ -1076,6 +1488,7 @@ def idle_loop():
             if should_wake():
                 print("[wake]", "静默", flush=True)
                 idle_tick()
+            publish_view()
         except Exception:                        # noqa: BLE001
             import traceback
             traceback.print_exc()

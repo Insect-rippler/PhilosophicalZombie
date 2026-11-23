@@ -1,8 +1,8 @@
 """body 代理：主代理说「她要做什么」，它判定做不做得成、要多久、做完有什么变化。
 
 和主代理共用同一个 key 和模型（判定是结构化输出，不需要文笔）。
-realm 全在 `ConsciousnessRealm/body/`：`rule.md` 说它是谁，`judge.json` 放判定标准，
-改标准不用动代码。
+通用 body 在 `ConsciousnessRealm/body/`：`rule.md` 说它是谁，`judge.json` 放判定标准。
+卡片的 `body/` 是覆盖层：同名文件覆盖通用文件，额外文件按 `body/order.json` 的顺序追加。
 
 它是**同步**的：主代理在回合内调 `active` 工具 → 这里立刻判定 → 写计时器 → 返回回执。
 到期结算和文本合并是另一条线（`engine/timers.py`），这里不参与。
@@ -10,6 +10,7 @@ realm 全在 `ConsciousnessRealm/body/`：`rule.md` 说它是谁，`judge.json` 
 
 import json
 import modelio
+import vclock
 import paths as _paths
 
 try:
@@ -17,6 +18,9 @@ try:
 except ImportError:
     def log(*a, **k):
         pass
+import os
+import queue
+import threading
 import random
 import re
 import sys
@@ -26,9 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-REALM = ROOT / "ConsciousnessRealm" / "body"
-RULE = REALM / "rule.md"
-JUDGE = REALM / "judge.json"
+COMMON_BODY = ROOT / "ConsciousnessRealm" / "body"
 
 from engine import timers  # noqa: E402
 
@@ -43,48 +45,16 @@ REWARD_LIMIT_DEFAULT = 60
 EMOTION_LIMIT = 36
 
 
-WORLD_DIR = REALM.parent / "world"
-ACTIVE = WORLD_DIR / "active.json"
+WORLD_DIR = _paths.realm("world")
 
 
 def load_world():
-    """当前世界的地图与活动表。换世界只改 active.json。"""
+    """活动表；地图在 state/world/map.json，这里不再读静态 places。"""
     try:
-        name = json.loads(ACTIVE.read_text(encoding="utf-8")).get("world") or ""
-    except (OSError, json.JSONDecodeError):
-        name = ""
-    root = WORLD_DIR / name if name else None
-    if not root or not root.exists():
-        return {"name": "", "places": [], "activities": []}
-    try:
-        places = json.loads((root / "places.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        places = {}
-    try:
-        acts = json.loads((root / "activities.json").read_text(encoding="utf-8"))
+        acts = json.loads((WORLD_DIR / "activities.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         acts = {}
-    return {"name": places.get("name") or name,
-            "places": places.get("places") or [],
-            "activities": acts.get("activities") or []}
-
-
-def map_lines(ch):
-    """当前位置和能走的地方，带步行分钟数。"""
-    world = load_world()
-    if not world["places"]:
-        return "（地图为空）"
-    local = str(ch.get("local") or "")
-    here = next((p for p in world["places"] if local and local.endswith(p.get("path", ""))), None)
-    if not here:
-        return "（她不在已知地点）" + "；".join(p.get("path", "") for p in world["places"])
-    by_id = {p["id"]: p for p in world["places"]}
-    out = [f"当前位置：{here.get('path')}"]
-    for link in here.get("links") or []:
-        target = by_id.get(link.get("to"))
-        if target:
-            out.append(f"- {target.get('path')}：步行 {link.get('minutes')} 分钟")
-    return "\n".join(out)
+    return {"name": "activities", "places": [], "activities": acts.get("activities") or []}
 
 
 def load_activities():
@@ -110,18 +80,90 @@ def available_activities(ch, limit=6):
     return rows[:limit]
 
 
-def load_realm():
-    rule = RULE.read_text(encoding="utf-8") if RULE.exists() else ""
-    sections = []
-    if JUDGE.exists():
+def _card_body_dir():
+    root = os.environ.get("PZ_CARD_ROOT")
+    return Path(root) / "body" if root else None
+
+
+def _body_file_order(folder):
+    """世界观层里非同名文件的加载顺序；没有 order.json 就用文件名排序。"""
+    if not folder or not folder.exists():
+        return []
+    order = []
+    meta = folder / "order.json"
+    if meta.exists():
         try:
-            data = json.loads(JUDGE.read_text(encoding="utf-8"))
+            data = json.loads(meta.read_text(encoding="utf-8"))
+            order = [str(x).strip() for x in (data.get("files") or []) if str(x).strip()]
+        except (OSError, json.JSONDecodeError):
+            order = []
+    names = [p.name for p in folder.iterdir()
+             if p.is_file() and p.name not in ("order.json",)]
+    return order + [n for n in sorted(names) if n not in order]
+
+
+def load_rule():
+    """通用 rule 先读；卡片同名 rule.md 覆盖；其它 md 按顺序追加。"""
+    base = COMMON_BODY / "rule.md"
+    text = base.read_text(encoding="utf-8").strip() if base.exists() else ""
+    card = _card_body_dir()
+    if not card or not card.exists():
+        return text
+    names = _body_file_order(card)
+    # 同名覆盖先执行，额外文件始终在覆盖之后追加。
+    if (card / "rule.md").exists():
+        text = (card / "rule.md").read_text(encoding="utf-8").strip()
+        names = [n for n in names if n != "rule.md"]
+    for name in names:
+        path = card / name
+        if not path.name.endswith(".md"):
+            continue
+        extra = path.read_text(encoding="utf-8").strip()
+        if extra:
+            text = f"{text}\n\n{extra}".strip()
+    return text
+
+
+def load_judge():
+    """通用 judge 先读；卡片同名 judge.json 覆盖；额外 json 合并 sections。"""
+    data = {"sections": {}}
+    base = COMMON_BODY / "judge.json"
+    if base.exists():
+        try:
+            data = json.loads(base.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            data = {}
-        for sec in (data.get("sections") or {}).values():
-            if isinstance(sec, dict) and sec.get("content"):
-                sections.append(str(sec["content"]).strip())
-    return rule.strip(), "\n\n".join(sections)
+            data = {"sections": {}}
+    card = _card_body_dir()
+    if not card or not card.exists():
+        return data
+    names = _body_file_order(card)
+    if (card / "judge.json").exists():
+        try:
+            data = json.loads((card / "judge.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        names = [n for n in names if n != "judge.json"]
+    for name in names:
+        path = card / name
+        if not path.name.endswith(".json"):
+            continue
+        try:
+            extra = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        sections = data.setdefault("sections", {})
+        for key, value in (extra.get("sections") or {}).items():
+            sections[key] = value
+    return data
+
+
+def load_realm():
+    data = load_judge()
+    sections = []
+    for sec in (data.get("sections") or {}).values():
+        if isinstance(sec, dict) and sec.get("content"):
+            sections.append(str(sec["content"]).strip())
+    return load_rule(), "\n\n".join(sections)
 
 
 def state_snapshot(ch=None):
@@ -168,7 +210,11 @@ def _activity_lines(ch):
     out = []
     for a in rows:
         place = "、".join(a.get("place") or [])
-        out.append(f"- {a.get('title', a.get('key'))}：约 {a.get('duration')} 分钟（{place}）")
+        title = a.get("title") or a.get("name") or a.get("key") or "（未命名活动）"
+        duration = a.get("duration")
+        if isinstance(duration, (list, tuple)) and len(duration) >= 2:
+            duration = f"{duration[0]}~{duration[1]}"
+        out.append(f"- {title}：约 {duration} 分钟（{place}）")
     return "\n".join(out)
 
 
@@ -196,7 +242,9 @@ def recent_context(limit=6):
                     a = json.loads(f.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     a = {}
-                desc = str(a.get("description") or "").strip()
+                desc = next((str(a.get(k) or "").strip()
+                             for k in ("short", "long", "event")
+                             if str(a.get(k) or "").strip()), "")
                 if desc:
                     lines.append(f"- 做：{desc}")
             text = (r.get("content") or "").strip()
@@ -224,44 +272,30 @@ def effort_rate(level):
     return EFFORT_RATE.get(str(level or "").strip(), EFFORT_DEFAULT)
 
 
-def _body_block(ch, sleep=False):
-    """按生理阶段判断还能不能动。返回拒绝理由，空串表示可以。
-
-    这些是硬状态，不该交给模型猜：困到极限、累垮、身体很差。
-    """
-    if sleep:
-        return ""
-    metab = ch.get("metabolism") or {}
-    # 困意不挡行动：困到极限由概率昏迷接管，不该逼她随便躺下。
-    # 疲劳可以挡——闲着它自己会降。
-    checks = (
-        ("fatigue", "撑不住", "身上没力气了，动不了"),
-    )
-    for key, band, why in checks:
-        name, _ = timers.stage_of(key, metab.get(key, 0))
-        if name == band:
-            return why
-    return ""
+SAFE_SECONDS = 2.0
 
 
 def _reject_text(busy, fallback="", now=None):
-    """拒绝的正文（不含「动作未受理：」前缀）。"""
+    """拒绝的正文（整句，不含前缀）。"""
     now = time.time() if now is None else float(now)
     if busy:
         entry = busy[0]
         at = float(entry.get("at") or 0)
         left = max(0.0, at - now)
-        doing = str(entry.get("semantic") or entry.get("text") or "").strip().rstrip("。")
-        ends = time.strftime("%H:%M", time.localtime(at or now))
-        return (f"身体正忙着「{doing}」，还剩 {human_left_sec(left)}（{ends} 结束）。"
-                f"想立刻改做别的就带 force；想等就以一句正文结束这一轮。")
-    return fallback or "这会儿做不了。"
+        slot = str(entry.get("slotId") or entry.get("slot") or "short").strip()
+        if left >= SAFE_SECONDS:
+            hint = "，或用 end 提前结束" if slot in ("long", "event") else ""
+            return (f"未受理：{slot} 正在执行，还剩 {human_left_sec(left)}。"
+                    f"等它结束再递{hint}，或带 force 打断。")
+        return (f"未受理：{slot} 正在执行，还剩 {human_left_sec(left)}。"
+                f"等它结束再递。")
+    return fallback or "未受理：这会儿做不了。"
 
 
 def _reject(busy=None, fallback="", now=None):
-    """统一的拒绝回执。前缀只在这里加一次。"""
-    return {"未执行": f"动作未受理：{_reject_text(busy or [], fallback, now)}",
-            "ok": False, "allow": False}
+    """统一的拒绝回执。"""
+    return {"未执行": _reject_text(busy or [], fallback, now),
+            "ok": False}
 
 
 OBSERVE_RULES = """
@@ -286,7 +320,7 @@ OBSERVE_RULES = """
 
 输出 JSON：{"hp":0,"health":0,"emotion":0,"text":"一句话描述她此刻的身体/情绪反应"}
 - 只给真正要变的字段；不变就省略。
-- text 是给主代理看的第三人称陈述，20 字以内。
+- text 是给主代理看的第三人称陈述，只写对方造成的变化，和 `<state>` 一致；20 字以内。
 """
 
 
@@ -317,7 +351,7 @@ def observe():
         "model": core.payload.get("model"),
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": "据此判断对方这一轮对她造成了什么。"}],
-        "temperature": 0.2,
+        "temperature": 0.0,
         "thinking": {"type": "disabled"},
         "response_format": {"type": "json_object"},
         "max_tokens": 600,
@@ -341,84 +375,111 @@ def observe():
     return applied or None
 
 
-def judge(description, ch=None, force=False, appeal=None, declared_slot=""):
+RATING_NOTE = {"缺陷": "完全没有这方面天赋", "普通": "普通人水平",
+               "标准": "百里挑一", "优良": "千里挑一", "卓越": "万里挑一"}
+
+
+def ability_lines():
+    """她的能力评估：评级 + 标尺，供 body 判断能不能做到。"""
+    try:
+        import core
+        import realm
+        data = realm.load(Path(core.REALM_ROOT) / "CHARACTER.md", "CHARACTER")
+    except Exception:                       # noqa: BLE001
+        return ""
+    body_data = data.get("body") or {}
+    keys = ("物理强度", "战场机动", "生理耐受", "战术规划", "战斗技巧", "源石技艺适应性")
+    rows = []
+    for key in keys:
+        value = str(body_data.get(key) or "").strip()
+        if value:
+            rows.append(f"- {key}：{value}（{RATING_NOTE.get(value, '')}）")
+    if not rows:
+        return ""
+    return ("## 她的能力评估\n\n" + "\n".join(rows) +
+            "\n\n判定能不能做到时，以这个范围为准：缺陷做不了，普通是常人水平，"
+            "标准、优良、卓越依次更高。")
+
+
+def judge(description, ch=None, force=False, declared_slot="", location=""):
     """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
 
-    force=True 表示主代理要打断手上正在做的事：槽位占用不再是阻碍，
-    但身体条件（累了、病了）照样能拒绝。
+    force=True 表示主代理要打断手上正在做的事：槽位占用不再是阻碍。
+    判定只给效果与到点文本，不做通行判断。
     """
     import core
     ch = ch if isinstance(ch, dict) else timers.load_character()
     rule, judge_rules = load_realm()
     system = (f"{rule}\n\n# 判定标准\n\n{judge_rules}\n\n"
 
-              "输出 JSON：{\"allow\":true/false, \"reason\":\"做不了时的原因（allow 为 false 时必须写清，不能为空）\", "
-              "\"duration\":分钟数, \"effort\":\"轻|中|重\", "
-              "\"location\":\"只有她明显转移到新地点时才填（如「奥格尼斯科/她的房间」），"
-              "原地的小动作一律留空字符串\", "
-              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"people\":[{\"name\":\"\",\"trust\":0}], \"sleeping\":false, \"text\":\"到点后显示的一句话\"}")
-    appeal_text = ""
-    if isinstance(appeal, dict) and appeal:
-        appeal_text = (f"## 她的申辩\n\n理由：{appeal.get('reason')}；"
-                       f"她认为只需 {appeal.get('minutes')} 分钟。\n"
-                       f"申辩成立就按她的数给；不成立就按你的判断，并在 reason 里说明为什么。\n\n")
-
+              "输出 JSON：{\"duration\":分钟参考值, \"effort\":\"轻|中|重\", "
+              "\"state_read\":\"照抄你看到的当前地点与正在做的事\", "
+              "\"basis\":\"这个时长是怎么来的，一句话\", "
+              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"text\":\"到点后的状态，和 state 的时间、地点一致，不写下一步\"}")
     user = (
         f"## 当前状态\n\n{state_snapshot(ch)}\n\n"
+        f"{ability_lines()}\n\n"
 
-        f"## 地图\n\n{map_lines(ch)}\n\n"
         f"## 可参考的活动（时长来自数据表，别脱离这个量级）\n\n{_activity_lines(ch)}\n\n"
         f"## 最近的言行\n\n{recent_context()}\n\n"
-        + appeal_text
         + f"## 她要做的事\n\n{description}\n\n"
+        + f"## 她的去向\n\n{('应在：' + location) if str(location or '').strip() else '原地，不移动'}\n\n"
         "时长优先取活动表里的值；表里没有的按常识给，但不要离谱。"
         "槽位由代码管，你不用判。"
     )
     if force:
         user += ("\n\n## 强制打断\n主代理要求打断她手上正在做的事，改做上面这件。"
-                 "按新动作判定即可；身体条件不够仍然可以拒绝。")
+                 "按新动作判定即可；只给奖励与到点文本，不要拒绝。")
 
     body = {
         "model": core.payload.get("model"),
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "max_tokens": 600,
-        "temperature": 0.2,
+        "temperature": 0.0,
         "thinking": {"type": "enabled" if _body_thinking() else "disabled"},
         "response_format": {"type": "json_object"},
     }
+    _t0 = vclock.real_now() if "vclock" in globals() else None
     response = modelio.send(body)
+    try:
+        import vclock as _vc
+        _elapsed = _vc.real_now() - _t0
+        _vc.advance_seconds(_elapsed)
+        try:
+            import core as _core
+            _core.record_latency(_elapsed)
+        except Exception:                   # noqa: BLE001
+            pass
+    except Exception:                       # noqa: BLE001
+        pass
     if not response:
         return None
-    content = ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    message = (response.get("choices") or [{}])[0].get("message") or {}
+    reasoning = str(message.get("reasoning_content") or "")
+    if reasoning:
+        log("judge.reasoning", text=reasoning[:1200])
+    content = message.get("content") or ""
     log("judge.raw", chars=len(content), head=content[:200])
     data = _parse(content)
     if not isinstance(data, dict):
         return None
+    if reasoning:
+        data["thinking"] = reasoning[:2000]
 
-    allow = bool(data.get("allow", False))
-    sleeping = bool(data.get("sleeping", False))
-    reason = str(data.get("reason") or "").strip()[:60]
     try:
         duration = float(data.get("duration") or 0)      # 不能取整，7 秒是 0.12 分钟
     except (TypeError, ValueError):
         duration = 0
-    duration = max(1 / 60, min(MAX_MINUTES, float(duration)))   # 最少 1 秒，不再有“瞬间”
+    duration = max(1 / 60, float(duration))
 
-    # 秒级动作不占身；其余按时长归槽，模型声明的 slot 要与估算一致
     instant = False
     declared = str(declared_slot or data.get("slot") or "").strip().lower()
-    slot = declared if declared in ("short", "long") else ("short" if duration <= SHORT_LIMIT else "long")
-    if not instant and declared in ("short", "long"):
-        limit = SLOT_CAP.get(declared, MAX_MINUTES)
-        if duration > limit:
-            allow = False
-            reason = (f"预计 {duration} 分钟，超过 {declared} 的 {limit} 分钟上限；"
-                      f"请改用 slot={'long' if declared == 'short' else 'long'}，"
-                      f"确实要强制就带 force")
+    slot = declared if declared in ("short", "long", "event") else (
+        "short" if duration <= SHORT_LIMIT else "long")
 
-    log("judge", desc=description[:60], allow=allow, minutes=duration,
-        force=force, instant=instant, reason=reason[:50],
+    log("judge", desc=description[:60], minutes=duration,
+        force=force, instant=instant,
         busy=len([t for t in timers.load_timers()
                   if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]))
 
@@ -430,7 +491,6 @@ def judge(description, ch=None, force=False, appeal=None, declared_slot=""):
             with long_log.open("a", encoding="utf-8") as handle:
                 handle.write(_json.dumps({"ts": time.strftime("%H:%M:%S"),
                                           "minutes": duration,
-                                          "allow": allow,
                                           "description": description},
                                          ensure_ascii=False) + "\n")
         except OSError:
@@ -439,25 +499,15 @@ def judge(description, ch=None, force=False, appeal=None, declared_slot=""):
     effort = str(data.get("effort") or "").strip()
     location = str(data.get("location") or "").strip()
 
-    # 地图外：没有具体位置，行路时间按 30~90 分钟抽一个数
-    world = load_world()
-    known = {p.get("path") for p in world.get("places") or []} if world else set()
-    if location and known and all(location not in k and not location.endswith(k) for k in known):
-        duration = max(duration, random.randint(30, 90))
     text = str(data.get("text") or "").strip()
 
     return {
-        "allow": allow,
-        "reason": reason,
         "duration": duration,
         "instant": instant,
-        "sleeping": sleeping,
         "effort": effort,
         "slot": slot,
         "slotId": timers.slot_id_for(slot),
-        "location": location,
         "reward": _clean_reward(data.get("reward")),
-        "people": data.get("people") if isinstance(data.get("people"), list) else [],
         "text": text,
         "raw": data,
     }
@@ -465,13 +515,9 @@ def judge(description, ch=None, force=False, appeal=None, declared_slot=""):
 
 def human_left_sec(seconds):
     total = int(round(max(0.0, float(seconds))))
-    if total < 60:
-        return f"{total} 秒"
-    return f"{total // 60} 分 {total % 60} 秒"
-
-
-NEXT_STEP = ("接下来二选一：结束这一轮（说一句话，或什么都不说）等它做完；"
-             "或直接递交下一步——但手上这件事没做完时，新动作会被拒，除非带 force 强行中断。")
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 
@@ -512,8 +558,124 @@ def _alarm_minutes(text, now=None):
     return (target - now) / 60.0
 
 
-def commit(description, slot="short", *, ch=None, force=False, appeal=None, sleep=None,
-           line=None, location=None, emotion_break=False):
+# ---------------- 异步受理 ----------------
+
+PROVISIONAL_MINUTES = 1.0          # 判定返回前的临时占位
+_JUDGE_QUEUE = queue.Queue()
+_WORKER_STARTED = False
+
+
+def _apply_judgement(job, verdict):
+    entries = timers.load_timers()
+    target = next((e for e in entries if e.get("id") == job["id"]), None)
+    if target is None:                       # 已被 force 撤掉
+        return
+    if verdict:
+        target["text"] = str(verdict.get("text") or job["description"])
+        target["reward"] = verdict.get("reward") or {}
+        if job.get("location"):
+            target["location"] = job.get("location")
+    else:
+        target["text"] = f"{job['description']}（完成）"
+    target.pop("pending", None)
+    target.pop("judging", None)
+    timers.save_timers(entries)
+
+
+def _worker():
+    while True:
+        job = _JUDGE_QUEUE.get()
+        try:
+            verdict = None
+            for _attempt in range(3):
+                verdict = judge(job["description"],
+                                declared_slot=job.get("slot") or "short",
+                                location=job.get("location") or "")
+                if verdict:
+                    break
+                time.sleep(1.2 * (_attempt + 1))
+            _apply_judgement(job, verdict)
+        except Exception:                    # noqa: BLE001
+            try:
+                _apply_judgement(job, None)
+            except Exception:                # noqa: BLE001
+                pass
+        finally:
+            _JUDGE_QUEUE.task_done()
+
+
+def _ensure_worker():
+    global _WORKER_STARTED
+    if _WORKER_STARTED:
+        return
+    _WORKER_STARTED = True
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def submit(description, slot="short", *, location="", line="", force=False,
+           seconds=0, end=""):
+    """受理即建完整计时器；body 后台只补奖励与文本。"""
+    ch_now = timers.load_character()
+    if (ch_now.get("state") or {}).get("active") == "sleep":
+        return {"ok": False, "未执行": "角色正在睡眠，不能受理动作。"}
+    slot = str(slot or "").strip()
+    if slot not in ("short", "long", "event"):
+        slot = "short"
+    if str(end or "").strip() in ("long", "event"):
+        done = timers.finish_early(str(end).strip())
+        if done:
+            ratio = float(done["ratio"])
+            elapsed = float(done["elapsed"])
+            scaled = {}
+            if ratio >= 0.1 and elapsed >= 60:
+                for key, value in (done["entry"].get("reward") or {}).items():
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        continue
+                    scaled[key] = round(float(value) * ratio, 3)
+                if scaled:
+                    ch_now = timers.load_character()
+                    timers._apply_reward(ch_now, scaled)
+                    timers._write(timers.CHARACTER, ch_now)
+            log("finish_early", slot=end, ratio=round(ratio, 2),
+                seconds=int(elapsed), reward=scaled)
+
+    try:
+        timers.settle()
+    except Exception:                         # noqa: BLE001
+        pass
+    now = time.time()
+    running = [e for e in timers.load_timers()
+               if str(e.get("slotId") or "") == slot
+               and float(e.get("at") or 0) > now]
+    if running and not force:
+        return _reject(running)
+    if force and running:
+        timers.cancel(slot)
+    estimated = float(seconds or 0)
+    if estimated <= 0:
+        estimated = PROVISIONAL_MINUTES * 60
+    try:
+        entry = timers.add(kind="action", text=description,
+                           minutes=estimated / 60.0,
+                           semantic=description[:30], slot=slot,
+                           location=location or "", source="body")
+    except timers.SlotFull:
+        return _reject(timers.blocking_entries())
+    _ensure_worker()
+    _JUDGE_QUEUE.put({"id": entry.get("id"), "slot": slot,
+                      "description": description,
+                      "location": location or "", "line": line or ""})
+    if slot == "short":
+        return {"已执行": "动作已受理；完成情况写在 <state> 的「刚刚发生」中。",
+                "ok": True}
+    ends = time.strftime("%H:%M:%S", time.localtime(float(entry.get("at") or 0)))
+    left = human_left_sec(max(0.0, float(entry.get("at") or 0) - time.time()))
+    return {"已执行": f"{slot} 已受理，还剩 {left}，{ends} 完成。可以继续调工具，也可以写正文收口。",
+            "ok": True}
+
+
+def commit(description, slot="short", *, ch=None, force=False, sleep=None,
+           line=None, location=None, emotion_break=False, end=""):
     """判定 + 建计时器，返回给主代理的回执。
 
     slot 参数只是主代理的建议，实际用哪个槽位由 body 按时长决定。
@@ -524,39 +686,38 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
         ch_break.setdefault("state", {})["emotionBreakPending"] = True
         timers._write(timers.CHARACTER, ch_break)
     ch = ch if isinstance(ch, dict) else snap["ch"]
+
+    # end 优先：先提前结束指定槽位，再走正常的冲突判定
+    if str(end or "").strip().lower() in ("long", "event"):
+        done = timers.finish_early(str(end).strip().lower())
+        if done:
+            ratio = float(done["ratio"])
+            elapsed = float(done["elapsed"])
+            scaled = {}
+            if ratio >= 0.1 and elapsed >= 60:
+                for key, value in (done["entry"].get("reward") or {}).items():
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        continue
+                    scaled[key] = round(float(value) * ratio, 3)
+                if scaled:
+                    timers._apply_reward(ch, scaled)
+                    timers._write(timers.CHARACTER, ch)
+            log("finish_early", slot=end, ratio=round(ratio, 2),
+                seconds=int(elapsed), reward=scaled)
     now = snap["now"]
     known = str(slot or "").strip().lower() in ("short", "long", "event")
     target_slot = timers.slot_id_for(slot) if known else ""
     busy = [t for t in timers.blocking_entries(now)
             if known and (t.get("slotId") or timers.slot_id_for(t.get("slot"))) == target_slot]
     if busy and not force:
-        if isinstance(appeal, dict) and appeal.get("reason"):
-            target = busy[0]
-            second = judge(str(target.get("text") or description), ch=ch, appeal=appeal)
-            want = float((second or {}).get("duration") or 0)
-            if second and want > 0:
-                new_at = now + want * 60
-                if new_at < float(target["at"]):
-                    entries = timers.load_timers()
-                    for item in entries:
-                        if item.get("id") == target.get("id"):
-                            item["at"] = new_at
-                    timers.save_timers(entries)
-                    return {"已调整": (f"已采纳申辩：{target.get('semantic') or ''} "
-                                      f"改为约 {human_left_sec(want * 60)}后完成。"),
-                            "ok": True, "allow": True}
         return _reject(busy, now=now)
 
     if (ch.get("state") or {}).get("active") == "sleep" and not sleep:
         return {"未执行": "动作未受理：她正在睡，叫醒之前做不了别的事。",
-                "ok": False, "allow": False}
+                "ok": False}
 
-    blocked = _body_block(ch, sleep=bool(sleep))
-    if blocked:
-        return {"未执行": f"动作未受理：{blocked}。", "ok": False, "allow": False}
-
-    verdict = judge(description, ch=ch, force=force, appeal=appeal,
-                    declared_slot=slot)
+    verdict = judge(description, ch=ch, force=force,
+                    declared_slot=slot, location=location)
     if verdict is not None:
         chosen = str(slot or "").strip().lower()
         if chosen not in ("short", "long", "event"):
@@ -582,21 +743,6 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             verdict["sleeping"] = True            # 只说“要睡”，时长交给 body
     if verdict is None:
         return {"ok": False, "reason": "判定失败：body 没有返回可解析的结果", "degraded": True}
-
-    for who in (verdict.get("people") or []):
-        if not isinstance(who, dict):
-            continue
-        name = str(who.get("name") or "").strip()
-        if not name:
-            continue
-        trust = who.get("trust") if isinstance(who.get("trust"), (int, float)) else 0
-        timers.touch_relation(ch, name, trust=float(trust))
-        log("relation", name=name[:16], trust=round(float(trust), 1))
-    if verdict.get("people"):
-        timers._write(timers.CHARACTER, ch)
-
-    if not verdict["allow"]:
-        return _reject(None, verdict["reason"] or "她现在的状态做不了这件事")
 
     if not verdict["text"]:
         verdict["text"] = f"{description}（完成）"
@@ -624,8 +770,7 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
 
     if verdict.get("sleeping"):
         if (ch.get("state") or {}).get("active") == "sleep":
-            return {"line": str(line or "").strip() or None,
-                    "已执行": "她已经在睡了。", "ok": True}
+            return {"已执行": "她已经在睡了。", "ok": True}
         # 二次确认：第一次只告知后果，五分钟内再递一次才真的睡下
         now = time.time()
         state = ch.setdefault("state", {})
@@ -634,28 +779,30 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             state.pop("sleepAskedAt", None)
             timers._write(timers.CHARACTER, ch)
             timers.set_sleeping(True)
-            return {"line": str(line or "").strip() or None,
-                    "已执行": "睡眠请求已受理，即将入睡。",
+            return {"已执行": "睡眠请求已受理，即将入睡。",
                     "ok": True}
-        if force:
-            state.pop("sleepAskedAt", None)
-            timers._write(timers.CHARACTER, ch)
-            timers.set_sleeping(True)
-            return {"line": str(line or "").strip() or None,
-                    "已执行": "睡眠请求已受理，即将入睡。",
-                    "ok": True}
-
-        sleepy = float((ch.get("metabolism") or {}).get("sleepiness") or 0)
-        health = float((ch.get("metabolism") or {}).get("health") or 100)
+        metab = ch.get("metabolism") or {}
+        sleepy = float(metab.get("sleepiness") or 0)
+        fatigue_now = float(metab.get("fatigue") or 0)
+        satiety_now = float(metab.get("satiety") or 0)
+        health = float(metab.get("health") or 100)
         expect_h = max(0.5, (sleepy - timers.SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health) / 200.0)
-        wake_at = time.strftime("%H:%M", time.localtime(now + expect_h * 3600))
+        wake_ts = now + expect_h * 3600
+        wake_at = time.strftime("%H:%M:%S", time.localtime(wake_ts))
+        wake_sleepy = max(0.0, sleepy - 7.0 * expect_h)
+        wake_fatigue = max(0.0, fatigue_now - 7.0 * expect_h)
+        wake_satiety = max(0.0, satiety_now - 1.5 * expect_h)
+        sleepy_name, sleepy_say = timers.stage_of("sleepiness", wake_sleepy)
+        fatigue_name, fatigue_say = timers.stage_of("fatigue", wake_fatigue)
+        satiety_name, _ = timers.stage_of("satiety", wake_satiety)
         state["sleepAskedAt"] = now
         timers._write(timers.CHARACTER, ch)
-        return {"line": str(line or "").strip() or None,
-                "未执行": (f"要睡下吗？按现在的困意，大约 {wake_at} 就会自己醒，"
-                          f"如果夜里反复入睡或者睡眠不足都会使第二天更容易疲劳。"
-                          f"确认要睡觉就再递交一次sleep。"),
-                "ok": False, "allow": False}
+        return {"未执行": (f"要睡下吗？按现在的困意，预计睡 {expect_h:.1f} 小时，"
+                          f"{wake_at} 左右自己醒。醒来时大约：困意 {wake_sleepy:.0f}（{sleepy_name}）、"
+                          f"疲惫 {wake_fatigue:.0f}（{fatigue_name}）、饱食 {wake_satiety:.0f}（{satiety_name}）。"
+                          f"如果半夜反复醒或睡眠不足，这些都会更差。确认要睡，5 分钟内再调一次 sleep；"
+                          f"不睡就到此为止。"),
+                "ok": False}
     cancelled = []
     if force:                       # 打断：先把槽位里没做完的那件撤掉
         cancelled = timers.cancel(verdict["slotId"])
@@ -668,7 +815,7 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             semantic=description[:30],
             slot=verdict["slot"],
             reward=verdict["reward"],
-            location=(location or verdict["location"]),
+            location=(location or ""),
             silent=verdict["duration"] <= 0,
             source="body",
         )
@@ -680,16 +827,17 @@ def commit(description, slot="short", *, ch=None, force=False, appeal=None, slee
             timers.save_timers(entries)
     except timers.SlotFull as exc:           # 闸门已查过，走到这里说明并发出错
         log("slot.race", desc=description[:40], error=str(exc)[:80])
-        return {"ok": False, "allow": False,
+        return {"ok": False,
                 "未执行": _reject_text(timers.blocking_entries(), str(exc))
                 .replace("动作未受理：", "", 1)}
 
-    ends = time.strftime("%H:%M", time.localtime(float(entry["at"])))
+    ends = time.strftime("%H:%M:%S", time.localtime(float(entry["at"])))
+    slot_name = str(verdict.get("slot") or slot or "short").strip()
+    left = human_left_sec(max(0.0, float(entry["at"]) - time.time()))
     receipt = {
-        "line": str(line or "").strip() or None,
-        "已执行": (f"动作已受理：{description}，预计 {human_left_sec(verdict['duration'] * 60)}"
-                   f"后完成（{ends}）。{NEXT_STEP}"
-                   + (f"（原估 {verdict['capped_from']:.0f} 分钟，已按 {verdict['slot']} 上限压缩）"
+        "已执行": (f"{slot_name} 已受理，还剩 {left}，预计 {ends} 完成。"
+                   f"可以：不调用工具说一句话；或带 force 打断当前动作。"
+                   + (f"（原估 {verdict['capped_from']:.0f} 分钟，已按 {slot_name} 上限压缩）"
                       if verdict.get("capped_from") else "")),
         "ok": True,
     }

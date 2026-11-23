@@ -147,6 +147,10 @@ def run(dry_run=False):
         except Exception as e:               # noqa: BLE001
             return {"ok": False, "reason": f"升格 stage{stage} 失败：{type(e).__name__}: {e}",
                     **plan, "stages": stages}
+    try:
+        stages.append(dream.map_refactor(dry_run=dry_run))
+    except Exception as e:                   # noqa: BLE001
+        stages.append({"stage": "map", "ok": False, "reason": f"{type(e).__name__}: {e}"})
     plan["stages"] = stages
 
     # 印象：只有这一轮的 U 消息多过保留数才值得整理

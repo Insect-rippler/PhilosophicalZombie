@@ -31,17 +31,17 @@
 ## 2. 目标状态（主代理看到的 `<state>`）
 
 ```
-当前时间：20:10（夜里，天黑了，人往回走）。
-角色当前位置：奥格尼斯科/城外土路。
+当前时间：20:10:00（夜里）。
+距上一次行动已过去 00:12:40。
+角色当前位置：荒野/营地（风险 0：安全）。
 角色当前穿着：深棕工装、墨绿披风、束发。
-身体：困意 38/100（正常）· 疲惫 65/200（正常）· 饱食 65/100 · 水分 56/100 · 健康 100/100
-手上：
-  [long]  她提灯带两人往坑口去（还剩 12 分钟，20:22 结束）
-  [short] 空
-  [event] 空
-上限：short 5 分钟 · long 187 分钟 · event 463 分钟
-刚发生：坡顶的风把灯吹得偏了一下（20:00）
+[short] 空
+[long] 正在做：我在墙根坐下歇一阵（已过 00:20:00 / 共 01:00:00，进度 33%）
+[event] 空
+刚刚发生：我把水囊灌满，系回行囊侧袋（完成）
 ```
+
+身体与情绪只在阶段有话说时出现；环境、风险、常见人物不写进 state，风险只跟在当前位置后面。
 
 字段说明：
 
@@ -82,36 +82,28 @@
 
 ## 3. 工具参数的变化
 
-`active` 增加一个可选字段：
+`active` 的参数：
 
 ```json
 {
-  "description": "她提灯带两人往坑口去",
-  "slot": "long",
-  "minutes": 25,          // 新增：她自己估的时长
+  "short": "我提灯带两人往坑口去",
+  "seconds": 1500,
   "scene": "…",
-  "force": false
+  "location": "奥格尼斯科/矿坑口"
 }
 ```
 
 规则：
 
 ```
-minutes 不填   → 按 slot 的默认值（short 2 / long 30 / event 180）
-minutes 超上限 → 直接拒，回执写清上限是多少
-minutes 明显离谱（> 上限 × 1.0）→ 拒，让她改 slot
+short / long / event 三选一，一条 message 只调一次 active
+seconds 必填（sleep 除外），主代理自己估整秒
+short 带 location：地点必须已存在且与当前相邻；不存在先 map create，不相邻先 map query
+short 的 location 可省略，省略 = 当前位置；long / event 必须填 location，写到点应在的位置；不走地图，只做到点校验
+槽位占着才拒；身体状态不再拒绝普通 active
 ```
 
-body 拿到 `minutes` 后**不再调模型**，只做三件事：
-
-```
-① 槽位是否被占（同槽未到期就拒，除非 force）
-② 生理硬状态（撑不住时拒，沿用 _body_block）
-③ 落账：建计时器、写 state、到点结算
-```
-
----
-
+body 在后台补奖励与到点文本；时长以主代理填的 seconds 为准，不再由 body 改写。
 ## 4. 主代理的判断规则（写进 AGENT，两句话）
 
 ```
@@ -146,8 +138,8 @@ body 的模型调用只在“申诉/复核”这类少数情况保留（`appeal`
 | 文件 | 改法 |
 |---|---|
 | `engine/timers.py` | `render_state()` 并回 `full=True` 的内容；新增「手上」「上限」两段 |
-| `engine/body.py` | 删 `judge()` 调用与 `_body_thinking`；`commit()` 用 `minutes` 参数；保留槽位检查、生理硬挡、落账 |
-| `function/function.json` | `active` 增加 `minutes`，描述改写 |
+| `engine/body.py` | `submit()` 只查槽位并建计时器，`seconds` 由主代理填；`judge()` 只补奖励与文本 |
+| `function/function.json` | `active` 改为 `short/long/event + seconds` |
 | `ConsciousnessRealm/AGENT.md` | 加「我想做 / 我做得到」两条与配套四条 |
 | `engine/core.py` | 不再注入 body 判定相关的 state 差异 |
 | `sim/` | 断言改成“递交即落账”，检查拒绝路径 |
@@ -171,7 +163,53 @@ B5 需要人工看 reasoning，其余自动化。
 
 ## 8. 开放问题
 
-1. **minutes 让谁估**：她自报 vs 按描述关键词查表。先让她自报，偏差大了再引入查表。
+1. **seconds 让谁估**：已确定由主代理自报；body 不再改时长。
 2. **event 槽要不要显示剩余**：一整天的事显示“还剩 6 小时”很怪，可能只显示“今天在做 X”。
 3. **body 完全删还是留申诉**：先留 `appeal`，跑一段时间看有没有人用它。
 4. **和事件重构的顺序**：先做事件（state 要加「刚发生」），再做交还——两次改同一处 state，分开会打两次补丁。
+
+---
+
+## 9. 交还方案（保留，暂不实施）
+
+日期：2026-11-11。决定：**继续用 body 模型，准确性优先**；方案先记在这里，以后合并。
+
+### 9.1 类别参数
+
+`active` 增加 `kind`：
+
+```
+slot   快慢：short / long / event     （决定占哪个槽）
+kind   性质：eat / drink / rest / work / travel / treat / sleep / other
+```
+
+### 9.2 数值仍由模型给，代码卡区间
+
+`body/effects.json` 给每个 kind 定每分钟区间；模型报的 reward 按分钟折算后：
+
+```
+区间内      受理
+超区间      钳到边界，回执注明「已按 <kind> 上限调整」
+kind 缺失   按关键词猜，猜不出按 work
+对不上      记 WARN，不拒绝
+```
+
+### 9.3 回执与到点文本
+
+```
+回执      代码模板生成
+到点文本  用她自己给的 line / scene，不再让 body 写「到点后的一句话」
+```
+
+### 9.4 为什么先不做
+
+```
+数值靠模型的判断力，目前比关键词表准
+省一次请求的价值 < 数值失真的代价
+等类别稳定、日志里能看出误判率，再切
+```
+
+### 9.5 已完成的隔离
+
+body 已按卡隔离：每张卡 `realm/body/{rule.md, judge.json, metabolism.json}`，
+`paths.realm()` 优先读卡里的，缺文件回落到全局。

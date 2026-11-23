@@ -16,6 +16,7 @@
 """
 
 import json
+import os
 import paths as _paths
 import re
 import sys
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
 
-REALM = ROOT / "ConsciousnessRealm"
+REALM = Path(os.environ.get("PZ_CARD_ROOT") or (ROOT / "ConsciousnessRealm"))
 MEMORY_MD = REALM / "MEMORY.md"
 PERSONA_MD = REALM / "PERSONA.md"
 PLAN_GLOB = REALM / "plan" / "archive"
@@ -634,7 +635,8 @@ def stage_plan(dry_run=False):
             kind = str(op.get("op") or "").lower()
             if kind not in ("advance", "revise", "abandon"):
                 continue
-            args = {"goal": op.get("goal"), "note": op.get("note") or ""}
+            args = {"goal": op.get("goal"),
+                    "note": op.get("note") or f"睡前回顾：{kind}"}
             if kind == "advance":
                 args["action"] = "step_done"
                 args["step"] = int(op.get("step") or 0)
@@ -691,3 +693,66 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def map_refactor(dry_run=False, max_rounds=10):
+    """审校运行时地图：hash 变了才跑，最多 10 轮，每轮可执行多步 map 操作。"""
+    import worldmap
+    if not worldmap.changed_since_refactor():
+        return {"stage": "map", "ok": True, "skipped": "地图没有变化"}
+    if dry_run:
+        return {"stage": "map", "ok": True, "skipped": "dry-run"}
+
+    snapshot = worldmap.load()
+    system = (
+        "你是地图审校。只整理她走过的地方，不编新地点。\n"
+        "规则：节点名唯一；边双向；每条边 1~120 秒；风险 0~3；"
+        "删除节点前先用 unlink 隔离；重复节点用 merge 合并。\n"
+        "重复判定必须同时看名称与邻接：名称相近（相同/包含/字符重合），"
+        "并且两点有边或共同邻居，才算重复。只看名字相同但相隔很远，不算重复。"
+        "确认重复后用 merge 合并，合并后再用 unlink 清掉重复边。\n"
+        "只输出 JSON：{\"done\": true/false, \"ops\": [{\"action\": ..., "
+        "\"target\": ..., \"link\": ..., \"risk\": 0~3, \"time\": 秒}]}。\n"
+        "done=true 表示你认为地图已经合理。\n"
+        "可用 action：query / create / link / unlink / set_risk / delete / merge。"
+    )
+    last_errors = []
+    for round_no in range(1, max_rounds + 1):
+        data = worldmap.load()
+        candidates = worldmap.duplicate_candidates()
+        user = (
+            f"当前地点：{worldmap._current()}\n"
+            f"地图：{json.dumps(data, ensure_ascii=False)}\n"
+            f"疑似重复（名称相近且有边/共同邻居）：{json.dumps(candidates, ensure_ascii=False)}\n"
+            f"上一轮校验：{json.dumps(last_errors, ensure_ascii=False) if last_errors else '无'}"
+        )
+        answer = call_model(system, user, max_tokens=2000)
+        if not isinstance(answer, dict):
+            log({"stage": "map", "round": round_no, "ok": False, "reason": "没有可解析的 JSON"})
+            break
+        ops = answer.get("ops") if isinstance(answer.get("ops"), list) else []
+        results = []
+        for op in ops:
+            try:
+                results.append(worldmap.apply_op(op, dream=True))
+            except Exception as e:           # noqa: BLE001
+                results.append({"ok": False, "reason": f"{type(e).__name__}: {e}"})
+        check = worldmap.validate()
+        current = worldmap._current()
+        errors = list(check.get("errors") or [])
+        if current and not worldmap.node_exists(current):
+            errors.append(f"当前地点 {current} 不在地图里")
+        log({"stage": "map", "round": round_no, "done": bool(answer.get("done")),
+             "ops": len(ops), "results": results[:20], "errors": errors,
+             "duplicates": check.get("duplicates") or []})
+        last_errors = errors
+        if not errors and answer.get("done"):
+            worldmap.mark_refactored()
+            return {"stage": "map", "ok": True, "rounds": round_no, "ops": len(ops)}
+    check = worldmap.validate()
+    if not check.get("errors"):
+        worldmap.mark_refactored()
+        return {"stage": "map", "ok": True, "rounds": max_rounds, "note": "达到上限但地图有效"}
+    worldmap.restore(snapshot)
+    return {"stage": "map", "ok": False, "rounds": max_rounds,
+            "errors": check.get("errors") or last_errors, "rolledBack": True}

@@ -8,6 +8,7 @@
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "engine"))
 
-USER_PATH = _paths.ROOT / "ConsciousnessRealm" / "USER.md"
+USER_PATH = _paths.ROOT / "ConsciousnessRealm" / "USER.md" if not os.environ.get("PZ_CARD_ROOT") else Path(os.environ["PZ_CARD_ROOT"]) / "USER.md"
 MARK = _paths.data("realTime", "impression.json")
 SESSION = _paths.data("session", "session.jsonl")
 

@@ -22,6 +22,7 @@
 
 import fsio
 import json
+import threading
 import paths as _paths
 import os
 
@@ -144,10 +145,13 @@ def cancel(slot_id=None, now=None):
 
 # ---------------- 槽位（容量由数据决定） ----------------
 
-WORLD_DIR = ROOT / "ConsciousnessRealm" / "world"
+WORLD_DIR = _paths.realm("world")
 SLOTS_PATH = WORLD_DIR / "slots.json"
 
 DEFAULT_SLOTS = [
+    {"id": "short", "kind": "action", "capacity": 1, "label": "小动作"},
+    {"id": "long", "kind": "action", "capacity": 1, "label": "持续动作"},
+    {"id": "event", "kind": "action", "capacity": 1, "label": "整段事件"},
     {"id": "active", "kind": "action", "capacity": 1, "label": "身体"},
     {"id": "event.random", "kind": "event", "capacity": 1, "label": "随机事件"},
 ]
@@ -165,13 +169,12 @@ def load_slots():
     return {s["id"]: s for s in slots if isinstance(s, dict) and s.get("id")}
 
 
-INSTANT_SECONDS = 30        # 这个时长以内、且不移动的动作，不进槽、不建计时器
 
 
 def slot_id_for(slot=None):
     """short / long / event 各占一个独立槽位。"""
     name = str(slot or "").strip()
-    return name if name in ("short", "long", "event") else "short"
+    return name if name in ("short", "long", "event", "aux") else "short"
 
 
 def occupancy(now=None):
@@ -189,11 +192,9 @@ def occupancy(now=None):
     return counts
 
 
-def blocking_entries(now=None, grace=None):
-    """占着槽位、还没到点的条目。没有宽限：该占多久就占多久。"""
+def blocking_entries(now=None):
     """占着槽位、还没到点的条目。与 occupancy 用同一套判定。"""
     now = time.time() if now is None else float(now)
-    grace = GRACE_SECONDS if grace is None else float(grace)
     out = []
     for entry in load_timers():
         sid = entry.get("slotId")
@@ -225,18 +226,13 @@ def can_take(slot_id, now=None):
 # ---------------- 建计时器（body 调用） ----------------
 
 def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=1000,
-        reward=None, location="", state=None, silent=False, source="body"):
+        reward=None, location="", state=None, silent=False, source="body",
+        pending=False, note=""):
     """建一条计时器。at 是绝对时间戳；给 minutes 时按 now+minutes 算。
 
     text 是到期后进上下文的那句话，由 body 在建的时候一并写好——
     这样到期时纯代码搬运即可，不需要再调一次模型。
     """
-    if kind in ("action", "event"):
-        cap = SLOT_MINUTE_CAP.get(str(slot).strip())
-        if cap is not None and float(minutes or 0) > cap:
-            log("timer.capped", slot=slot, was=round(float(minutes), 1), cap=cap,
-                text=str(text)[:26])
-            minutes = cap
     slot_id = slot_id_for(slot) if kind == "action" else None
     if slot_id:
         ok, why = can_take(slot_id)
@@ -249,6 +245,7 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
     entry = {
         "id": f"t-{int(time.time() * 1000) % 10**9:09d}-{len(timers):03d}",
         "at": float(at),
+        "minutes": float(minutes),
         "kind": kind,
         "semantic": semantic or text[:20],
         "text": text,
@@ -259,10 +256,15 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
         "source": source,
         "createdAt": time.time(),
     }
+    if note:
+        entry["note"] = str(note).strip()
     if reward:
         entry["reward"] = dict(reward)
     if location:
         entry["location"] = str(location)
+    if pending:
+        entry["pending"] = True
+        entry["judging"] = True
     timers.append(entry)
     save_timers(timers)
     return entry
@@ -275,6 +277,28 @@ def add(*, kind, text, at=None, minutes=0, semantic="", slot="short", chance=100
 def _clamp(value, bounds):
     lo, hi = bounds
     return max(lo, min(hi, value))
+
+
+def finish_early(slot_id, now=None):
+    """提前结束某个槽位上的动作：撤掉计时器，返回进度信息。不校验位置。"""
+    now = time.time() if now is None else float(now)
+    entries = load_timers()
+    for index, entry in enumerate(entries):
+        if str(entry.get("kind")) != "action":
+            continue
+        slot = str(entry.get("slotId") or entry.get("slot") or "").strip()
+        if slot != str(slot_id).strip():
+            continue
+        if float(entry.get("at") or 0) <= now:
+            continue
+        total = float(entry.get("at") or 0) - float(entry.get("createdAt") or now)
+        elapsed = now - float(entry.get("createdAt") or now)
+        ratio = max(0.0, min(1.0, elapsed / total)) if total > 0 else 0.0
+        entries.pop(index)
+        save_timers(entries)
+        push_pending([f"她提前结束了「{str(entry.get('semantic') or entry.get('text') or '').strip()[:24]}」。"], now)
+        return {"entry": entry, "ratio": ratio, "elapsed": elapsed, "total": total}
+    return None
 
 
 def _apply_reward(ch, delta):
@@ -301,6 +325,9 @@ def _apply_reward(ch, delta):
             elif cur <= EMOTION_LOCK_HIGH and want > EMOTION_LOCK_HIGH:
                 side = "high"
             if st.pop("emotionBreakPending", False):
+                reason = st.pop("emotionBreakReason", "")
+                if reason:
+                    log("emotion.break", reason=str(reason)[:60])
                 st["emotionLock"] = {"side": "none", "cool": EMOTION_LOCK_COOLDOWN}
             elif side and cool == 0 and lock.get("side") == side:
                 want = EMOTION_LOCK_LOW if side == "low" else EMOTION_LOCK_HIGH
@@ -314,7 +341,7 @@ def _apply_reward(ch, delta):
     return applied
 
 
-def settle(now=None, *, rng=None):
+def _settle_impl(now=None, *, rng=None):
     """结算到期的计时器。纯代码：改数值/位置/状态，把到期文本倒进缓存池。
 
     返回 {"fired": [...], "lines": [...], "woke": bool}
@@ -333,7 +360,7 @@ def settle(now=None, *, rng=None):
         if not isinstance(entry, dict):
             continue
         at = float(entry.get("at") or 0)
-        if at > now:
+        if entry.get("pending") or at > now:
             keep.append(entry)
             continue
         chance = int(entry.get("chance") or 1000)
@@ -343,17 +370,28 @@ def settle(now=None, *, rng=None):
 
         if entry.get("alarm"):                    # 闹钟：睡着就叫醒，醒着只提一句
             state_now = ch.setdefault("state", {})
+            note = str(entry.get("note") or "").strip()
+            tail = f"（{note}）" if note else ""
             if state_now.get("active") == "sleep":
                 state_now["active"] = "wake"      # 直接改 ch，随 settle 一起落盘
                 state_now.pop("sleepStartedAt", None)
-                entry["text"] = "闹钟到点了，她醒了过来。"
+                entry["text"] = "闹钟到点了，她醒了过来。" + tail
             else:
-                entry["text"] = "闹钟到点了。"
+                entry["text"] = "闹钟到点了。" + tail
                 entry["silent"] = False
 
-        if entry.get("reward"):
+        slot_now = str(entry.get("slotId") or entry.get("slot") or "").strip()
+        target = str(entry.get("location") or "").strip()
+        failed = False
+        if slot_now in ("long", "event") and target:
+            if str(ch.get("local") or "").strip() != target:
+                failed = True
+                entry["failed"] = True
+                entry["reward"] = {}
+                entry["text"] = f"到点时她不在{target}，这件事没做成。"
+        if not failed and entry.get("reward"):
             entry["applied"] = _apply_reward(ch, entry["reward"])
-        if entry.get("location"):
+        if not failed and entry.get("location"):
             ch["local"] = entry["location"]
 
         if not entry.get("silent") and str(entry.get("text") or "").strip():
@@ -363,6 +401,14 @@ def settle(now=None, *, rng=None):
         fired.append({"id": entry.get("id"), "kind": entry.get("kind")})
 
     if fired:
+        try:
+            log_path = _paths.data("realTime", "timer_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                for item in fired:
+                    handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except (OSError, ValueError):
+            pass
         save_timers(keep)
         save_character(ch)
         if lines:
@@ -378,8 +424,6 @@ RATES = {
     "sleep": {"satiety": -1.5, "hydration": -1.5, "fatigue": -7.0, "sleepiness": -7.0},
 }
 MAX_GAP_HOURS = 12
-SLOT_MINUTE_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}
-GRACE_SECONDS = 0        # 已取消宽限，保留常量只为兼容旧调用
 MAINTAIN_AFTER_HOURS = 3      # 睡着超过这么久，就该跑一次维护
 MAINTENANCE = _paths.data("realTime", "maintenance.json")          # 一次结算最多补 12 小时，再长就当睡过去了
 
@@ -484,7 +528,7 @@ def harness_metabolism():
     """读生理子系统自己的配置：ConsciousnessRealm/body/metabolism.json。"""
     import json as _json
     from pathlib import Path as _Path
-    path = _Path(_paths.ROOT) / "ConsciousnessRealm" / "body" / "metabolism.json"
+    path = _paths.realm("body", "metabolism.json")
     try:
         return _json.loads(path.read_text(encoding="utf-8")) or {}
     except (OSError, ValueError):
@@ -730,6 +774,13 @@ PART_HINT = {
 }
 
 
+def _hms(seconds):
+    total = int(round(max(0.0, float(seconds))))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def clock_text(now=None):
     """返回 "21:07（夜里，天黑了，人往回走）" 这种带行为含义的时间串。"""
     now = time.time() if now is None else float(now)
@@ -740,7 +791,7 @@ def clock_text(now=None):
         if hour >= edge:
             part = label
     hint = PART_HINT.get(part, "")
-    return f"{time.strftime('%H:%M', tm)}（{part}{'，' + hint if hint else ''}）"
+    return f"{time.strftime('%H:%M:%S', tm)}（{part}{'，' + hint if hint else ''}）"
 
 
 def stage_tables():
@@ -857,24 +908,6 @@ def tick_lock():
         _write(CHARACTER, ch)
 
 
-def places():
-    """地点表：地点名 -> 属性。"""
-    path = _paths.ROOT / "ConsciousnessRealm" / "world" / "places.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def place_of(local):
-    """从「城/地点」里取地点名，匹配地点表。"""
-    local = str(local or "")
-    for name in places():
-        if name in local:
-            return name
-    return ""
-
-
 def relations(ch):
     """角色记得的人：{名字: {trust, met}}。"""
     rel = ch.get("relations")
@@ -892,44 +925,6 @@ def touch_relation(ch, name, trust=0, met=1):
     item["last"] = time.strftime("%Y-%m-%d %H:%M", time.localtime())
 
 
-def render_environment(ch, now=None):
-    """环境与风险：给主代理判断处境用的材料。"""
-    now = time.time() if now is None else float(now)
-    hour = time.localtime(now).tm_hour
-    night = hour >= 21 or hour < 6
-    local = str(ch.get("local") or "")
-    name = place_of(local)
-    if not name:
-        return []
-    info = places().get(name) or {}
-    bits = [f"所处环境：{local}"]
-    bits.append("室内" if info.get("indoor") else "露天")
-    if info.get("private"):
-        bits.append("她自己的地方")
-    else:
-        bits.append(f"夜里{info.get('nightCrowd') or '情况不明'}" if night
-                    else "白天有人来往")
-    risk = int(info.get("risky") or 0)
-    if night:
-        risk += 1
-    level = "低" if risk <= 1 else ("中" if risk <= 3 else "高")
-    bits.append(f"此时风险：{level}")
-    lines = [" · ".join(bits)]
-
-    known = relations(ch)
-    regulars = [r for r in (info.get("regulars") or [])]
-    if regulars:
-        shown = []
-        for who in regulars:
-            item = known.get(who)
-            if item:
-                shown.append(f"{who}（来往 {int(item.get('met') or 0)} 次，信任 {int(item.get('trust') or 0)}）")
-            else:
-                shown.append(f"{who}（只是认得）")
-        lines.append("此处常见：" + "、".join(shown))
-    return lines
-
-
 def render_state(ch=None, pending="", now=None, full=False):
     """渲染 <state> 的内容行。这是常驻信息：时间、位置、身体状况、刚发生的事。"""
     ch = ch if isinstance(ch, dict) else load_character()
@@ -938,7 +933,7 @@ def render_state(ch=None, pending="", now=None, full=False):
         alarm = [e for e in load_timers() if e.get("alarm")]
         when = ""
         if alarm:
-            when = "，闹钟定在 " + time.strftime("%H:%M", time.localtime(float(alarm[0]["at"])))
+            when = "，闹钟定在 " + time.strftime("%H:%M:%S", time.localtime(float(alarm[0]["at"])))
         lines.append(f"角色正在睡眠{when}。她已经躺下了，不必再递交睡下的动作；醒来自会由生理或闹钟触发。")
 
     moment = time.time() if now is None else float(now)
@@ -965,16 +960,22 @@ def render_state(ch=None, pending="", now=None, full=False):
         except (OSError, ValueError, json.JSONDecodeError):
             last_action = 0
     if last_action:
-        span = max(0, int((moment - last_action) // 60))
-        if span >= 60:
-            lines.append(f"距上一次行动已过去 {span // 60} 小时 {span % 60} 分钟。")
-        else:
-            lines.append(f"距上一次行动已过去 {span} 分钟。")
+        span = max(0.0, moment - last_action)
+        lines.append(f"距上一次行动已过去 {_hms(span)}。")
 
     local = str(ch.get("local") or "").strip()
     if local:
-        lines.append(f"角色当前位置：{local}。")
-    lines.extend(render_environment(ch, now))
+        risk_text = ""
+        try:
+            import worldmap
+            worldmap.ensure_current(local, 0)
+            risk = worldmap.risk_of(local)
+            if risk is not None:
+                risk_text = f"（风险 {risk}：{worldmap.RISK_LABELS.get(risk, '未知')}）"
+        except Exception:                     # noqa: BLE001
+            risk_text = ""
+        lines.append(f"角色当前位置：{local}{risk_text}。")
+    # 环境/风险/常见人物先不写进 state；由地图工具按需查询
     outfit = _paths.data("media", "self", "appearance", "outfit.json")
     if outfit.exists():
         try:
@@ -988,19 +989,27 @@ def render_state(ch=None, pending="", now=None, full=False):
         except (OSError, ValueError):
             pass
 
-    busy = [t for t in load_timers()
-            if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
-    if busy:
-        parts = []
-        for entry in busy:
-            doing = str(entry.get("semantic") or entry.get("text") or "").strip()
-            left_sec = max(0.0, float(entry["at"]) - moment)
-            slot = entry.get("slotId") or entry.get("slot") or ""
-            left = (f"{int(left_sec // 60)} 分钟" if left_sec >= 60
-                    else f"{int(left_sec)} 秒")
-            parts.append(f"[{slot}] {doing}（还剩 {left}）")
-        lines.append("角色正在做：" + "；".join(parts) + "。")
-
+    active_entries = [t for t in load_timers()
+                      if t.get("kind") == "action" and float(t.get("at") or 0) > moment]
+    for name in ("short", "long", "event"):
+        entry = next((e for e in active_entries
+                      if str(e.get("slotId") or e.get("slot") or "") == name), None)
+        if not entry:
+            lines.append(f"[{name}] 空")
+            continue
+        doing = str(entry.get("semantic") or entry.get("text") or "").strip()
+        left = _hms(max(0.0, float(entry["at"]) - moment))
+        target = str(entry.get("location") or "").strip()
+        goal = f"，应在 {target}" if target and target != str(ch.get("local") or "") else ""
+        if name in ("long", "event"):
+            total = float(entry.get("minutes") or 0) * 60.0
+            if total <= 0:
+                total = max(0.0, float(entry["at"]) - moment)
+            elapsed = max(0.0, total - max(0.0, float(entry["at"]) - moment))
+            pct = int(min(100.0, max(0.0, elapsed / total * 100.0))) if total else 0
+            lines.append(f"[{name}] 正在做：{doing}（已过 {_hms(elapsed)} / 共 {_hms(total)}，进度 {pct}%{goal}）")
+        else:
+            lines.append(f"[{name}] 正在做：{doing}（还剩 {left}{goal}）")
 
     if ch.get("state", {}).get("groggy"):
         lines.append("角色刚睡醒，没睡透（生理原因）：动作会慢半拍，说话也短。")
@@ -1026,7 +1035,7 @@ def render_state(ch=None, pending="", now=None, full=False):
         where = "跌到分界" if lock["side"] == "low" else "涨到分界"
         lines.append(
             f"【情绪已经{where}，暂时锁住】她再往前一步，就不是自己能回来的了。"
-            f"要越过，递交 active 时带 emotion_break=true，并在 description 里写清她为什么认这一步。")
+            f"要越过，调用 emotion 工具（break=true），在 reason 里写清她为什么认这一步。")
 
     emo = (ch.get("emotion") or {}).get("emotion")
     if isinstance(emo, (int, float)):
@@ -1040,7 +1049,7 @@ def render_state(ch=None, pending="", now=None, full=False):
     if pending:
         lines.append(f"刚刚发生：{pending}")
 
-    log("state.render", busy=[str(t.get("semantic"))[:24] for t in busy],
+    log("state.render", busy=[str(t.get("semantic"))[:24] for t in active_entries],
         clock=clock_text(now),
         metab={k: ch.get("metabolism", {}).get(k) for k in ("sleepiness", "fatigue")})
     return lines
@@ -1054,7 +1063,7 @@ def push_pending(lines, now=None):
     if not isinstance(pool, list):
         pool = []
     log("pending.push", lines=[str(x)[:60] for x in lines])
-    stamp = time.strftime("%H:%M", time.localtime(now))
+    stamp = time.strftime("%H:%M:%S", time.localtime(now))
     for line in lines:
         pool.append({"at": now, "clock": stamp, "text": line})
     _write(PENDING, pool)
@@ -1125,3 +1134,12 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+_STATE_LOCK = threading.RLock()
+
+
+def settle(now=None):
+    """对外入口：同一时刻只让一个线程结算。"""
+    with _STATE_LOCK:
+        return _settle_impl(now)

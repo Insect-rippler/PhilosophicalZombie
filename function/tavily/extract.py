@@ -5,7 +5,8 @@ import sys
 url = "https://api.tavily.com/extract"
 # ---------------- 路径变量 ----------------
 agent = Path(__file__).resolve().parents[2]
-CFGPath = Path(agent).joinpath("state", "Philosophical.json")
+import os as _os
+CFGPath = Path(_os.environ.get("PZ_DATA") or Path(agent).joinpath("state")).joinpath("Philosophical.json")
 configPath = Path(agent).joinpath("function", "tavily", "config.json")
 
 # ---------------- config校验表 ----------------

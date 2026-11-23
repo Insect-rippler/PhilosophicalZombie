@@ -1,6 +1,7 @@
 """检索层：记忆、世界书、技艺的召回与渲染。"""
 
 import os
+import time
 import re
 
 
@@ -27,6 +28,55 @@ def render_transcript(text):
     return text.strip()
 
 
+def _seen_penalty(seen, now, cfg):
+    """最近注入过的记忆，轻微下调召回值；相关性本身不变。"""
+    if not seen:
+        return 0.0
+    ceiling = float(cfg.get("penaltyMax", 0.05))
+    half_life = float(cfg.get("penaltyHalfLifeMinutes", 15))
+    if ceiling <= 0 or half_life <= 0:
+        return 0.0
+    age = max(0.0, now - float(seen)) / 60.0
+    return ceiling * (0.5 ** (age / half_life))
+
+
+def _rank(hits):
+    """相关性 + 基础激活 + 重要性，按预算取满。"""
+    import promote
+    lib = core.memory_lib() if core.memory_lib is not None else None
+    items = {it["id"]: it for it in (lib.items if lib else [])}
+    cfg = core.harness.get("retrieval") or {}
+    w = cfg.get("activation") or {}
+    w_rel = float(w.get("rel", 1.0))
+    w_base = float(w.get("base", 0.1))
+    w_imp = float(w.get("imp", 0.1))
+    min_score = float(w.get("minScore", 0.50))
+    budget = int(w.get("budgetChars", 3000))
+
+    rows = []
+    now = time.time()
+    for h in hits:
+        item = items.get(h["id"]) or {}
+        base = promote.base(item) if item else 0.0
+        imp = float(item.get("importance") or 0) or 3.0
+        effective = float(h["score"]) - _seen_penalty(h.get("seen"), now, w)
+        h["_effective"] = effective
+        score = w_rel * effective + w_base * base + w_imp * (imp - 3) / 2.0
+        if score < min_score:
+            continue
+        rows.append((score, h))
+    rows.sort(key=lambda x: -float(x[1].get("_effective", x[1]["score"])))
+
+    kept, used = [], 0
+    for score, h in rows:
+        chars = int(h.get("chars") or len(str(h.get("text") or "")))
+        if kept and used + chars > budget:
+            continue
+        kept.append(dict(h, rank_score=round(score, 4)))
+        used += chars
+    return kept
+
+
 def memory_recall(search_text, record=True):
     """返回 <memory_momentary> 块，没有命中返回空串。
 
@@ -37,26 +87,34 @@ def memory_recall(search_text, record=True):
         return ""
 
     try:
-        slices = core.memory_search(search_text, top_k=core.MEMORY_TOP_K, kind="slice",
-                               min_score=core.SLICE_FLOOR, record=False)
-        blocks = core.memory_search(search_text, top_k=core.BLOCK_TOP_K, kind="block",
+        slices = core.memory_search(search_text, top_k=40, kind="slice",
+                               min_score=None, record=False)
+        blocks = core.memory_search(search_text, top_k=40, kind="block",
                                min_score=None, record=False)
     except Exception as e:                   # noqa: BLE001
         core.ERROR.append(f"[core.ERROR] 记忆检索失败：{type(e).__name__}: {e}")
         return ""
 
-    blocks = [b for b in blocks if b["score"] >= core.BLOCK_FLOOR]
-    if slices:
-        # 主题集中时多收几条；主题稀薄时只留最相关的
-        best = max(h["score"] for h in slices)
-        floor = max(core.SLICE_FLOOR, best - core.SLICE_MARGIN)
-        slices = [h for h in slices if h["score"] >= floor]
-
-    kept = blocks + slices
+    hits = blocks + slices
+    try:
+        lib = core.memory_lib()
+        items = {it["id"]: it for it in lib.items}
+        now = time.time()
+        for h in hits:
+            item = items.get(h["id"])
+            if item is not None:
+                h["seen"] = item.get("lastInjected") or item.get("lastRecall")
+        kept = _rank(hits)
+        for h in kept:
+            item = items.get(h["id"])
+            if item is not None:
+                item["lastInjected"] = now
+        if kept:
+            lib._save()
+    except Exception:                           # noqa: BLE001
+        kept = _rank(hits)
     if not kept:
         return ""
-    kept.sort(key=lambda h: (h["kind"] != "block", -h["score"]))
-    kept = kept[:core.MEMORY_TOP_K + core.BLOCK_TOP_K]
 
     if record and core.memory_lib is not None and os.environ.get("PZ_TEST") != "1":
         try:

@@ -141,3 +141,82 @@ def send(body, timeout=(15, 600)):
                stream=bool(body.get("stream")), msgs=len(body.get("messages") or []),
                usage=(r.json().get("usage") or {}).get("total_tokens"))
     return r.json()
+
+
+def stream(body, on_delta=None, timeout=(15, 600)):
+    """流式请求：逐块回调正文，返回与 send() 同形的完整 message。"""
+    import requests
+    import urllib3
+    import time as _t
+    import runlog
+    urllib3.disable_warnings()
+    started = _t.time()
+    body = dict(body)
+    body["stream"] = True
+    opts = dict(body.get("stream_options") or {})
+    opts["include_usage"] = True
+    body["stream_options"] = opts
+    try:
+        r = requests.post(
+            core.chat_completions_url,
+            headers={"Authorization": f"Bearer {core.API_KEY}", "Content-Type": "application/json"},
+            json=body, timeout=timeout, verify=core.VERIFY_SSL, stream=True,
+            proxies={"http": None, "https": None},
+        )
+    except Exception as e:                       # noqa: BLE001
+        core.ERROR.append(f"[core.ERROR] 流请求失败：{type(e).__name__}: {e}")
+        runlog.log("model.fail", ms=int((_t.time()-started)*1000), stream=True,
+                   error=f"{type(e).__name__}: {e}"[:160])
+        return None
+    if r.status_code != 200:
+        core.ERROR.append(f"[core.ERROR] HTTP {r.status_code}: {r.text[:300]}")
+        runlog.log("model.http", ms=int((_t.time()-started)*1000), status=r.status_code, stream=True)
+        return None
+    content, reasoning, usage = [], [], None
+    calls = {}
+    try:
+        for line in r.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if obj.get("usage"):
+                usage = obj["usage"]
+            for choice in obj.get("choices") or []:
+                delta = choice.get("delta") or {}
+                if delta.get("reasoning_content"):
+                    reasoning.append(str(delta["reasoning_content"]))
+                piece = delta.get("content")
+                if piece:
+                    content.append(str(piece))
+                    if on_delta is not None:
+                        on_delta(str(piece))
+                for part in delta.get("tool_calls") or []:
+                    idx = int(part.get("index") or 0)
+                    slot = calls.setdefault(idx, {"id": "", "type": "function",
+                                                  "function": {"name": "", "arguments": ""}})
+                    if part.get("id"):
+                        slot["id"] = part["id"]
+                    fn = part.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += str(fn["name"])
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += str(fn["arguments"])
+    finally:
+        try:
+            r.close()
+        except Exception:                        # noqa: BLE001
+            pass
+    runlog.log("model.ok", ms=int((_t.time()-started)*1000), stream=True,
+               usage=(usage or {}).get("total_tokens"))
+    message = {"role": "assistant", "content": "".join(content)}
+    if reasoning:
+        message["reasoning_content"] = "".join(reasoning)
+    if calls:
+        message["tool_calls"] = [calls[i] for i in sorted(calls)]
+    return {"choices": [{"message": message}], "usage": usage or {}}
