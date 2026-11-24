@@ -412,6 +412,32 @@ def observe():
     return _adjust_now()
 
 
+RATING_NOTE = {"缺陷": "完全没有这方面天赋", "普通": "普通人水平",
+               "标准": "百里挑一", "优良": "千里挑一", "卓越": "万里挑一"}
+
+
+def ability_lines():
+    """她的能力评估：评级 + 标尺，供 body 判断能不能做到。"""
+    try:
+        import core
+        import realm
+        data = realm.load(Path(core.REALM_ROOT) / "CHARACTER.md", "CHARACTER")
+    except Exception:                       # noqa: BLE001
+        return ""
+    body_data = data.get("body") or {}
+    keys = ("物理强度", "战场机动", "生理耐受", "战术规划", "战斗技巧", "源石技艺适应性")
+    rows = []
+    for key in keys:
+        value = str(body_data.get(key) or "").strip()
+        if value:
+            rows.append(f"- {key}：{value}（{RATING_NOTE.get(value, '')}）")
+    if not rows:
+        return ""
+    return ("## 她的能力评估\n\n" + "\n".join(rows) +
+            "\n\n判定能不能做到时，以这个范围为准：缺陷做不了，普通是常人水平，"
+            "标准、优良、卓越依次更高。")
+
+
 def judge(description, ch=None, force=False, declared_slot="", location=""):
     """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
 
