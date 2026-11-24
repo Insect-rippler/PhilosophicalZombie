@@ -1069,7 +1069,7 @@ def _run_user_turn(text):
             publish_error(str(value))
     try:
         try:
-            body.observe()
+            body.adjust()
         except Exception as exc:              # noqa: BLE001
             log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
         core.USER_LOOP = True
