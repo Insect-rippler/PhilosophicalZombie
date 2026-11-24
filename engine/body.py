@@ -350,7 +350,7 @@ def _clamp_adjust(raw):
     return out
 
 
-def adjust():
+def _adjust_now():
     """看最新一条用户 message 对整体生理状态的影响；情绪与代谢合并为一次调整。"""
     import core
     rows = []
@@ -402,9 +402,297 @@ def adjust():
     return applied or None
 
 
+def adjust():
+    """同步执行；供测试/兼容调用。主回合走 adjust_async。"""
+    return _adjust_now()
+
+
 def observe():
     """旧入口保留兼容；已并入 adjust。"""
-    return adjust()
+    return _adjust_now()
+
+
+def judge(description, ch=None, force=False, declared_slot="", location=""):
+    """让模型判一次。时长参考数据表，槽位由时长推导并检查容量。
+
+    force=True 表示主代理要打断手上正在做的事：槽位占用不再是阻碍。
+    判定只给效果与到点文本，不做通行判断。
+    """
+    import core
+    ch = ch if isinstance(ch, dict) else timers.load_character()
+    rule, judge_rules = load_realm()
+    system = (f"{rule}\n\n# 判定标准\n\n{judge_rules}\n\n"
+
+              "输出 JSON：{\"duration\":分钟参考值, \"effort\":\"轻|中|重\", "
+              "\"state_read\":\"照抄你看到的当前地点与正在做的事\", "
+              "\"basis\":\"这个时长是怎么来的，一句话\", "
+              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"text\":\"到点后的状态，和 state 的时间、地点一致，不写下一步\"}")
+    user = (
+        f"## 当前状态\n\n{state_snapshot(ch)}\n\n"
+        f"{ability_lines()}\n\n"
+
+        f"## 可参考的活动（时长来自数据表，别脱离这个量级）\n\n{_activity_lines(ch)}\n\n"
+        f"## 最近的言行\n\n{recent_context()}\n\n"
+        + f"## 她要做的事\n\n{description}\n\n"
+        + f"## 她的去向\n\n{('应在：' + location) if str(location or '').strip() else '原地，不移动'}\n\n"
+        "时长优先取活动表里的值；表里没有的按常识给，但不要离谱。"
+        "槽位由代码管，你不用判。"
+    )
+    if force:
+        user += ("\n\n## 强制打断\n主代理要求打断她手上正在做的事，改做上面这件。"
+                 "按新动作判定即可；只给奖励与到点文本，不要拒绝。")
+
+    body = {
+        "model": core.payload.get("model"),
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "max_tokens": 600,
+        "temperature": 0.0,
+        "thinking": {"type": "enabled" if _body_thinking() else "disabled"},
+        "response_format": {"type": "json_object"},
+    }
+    _t0 = vclock.real_now() if "vclock" in globals() else None
+    response = modelio.send(body)
+    try:
+        import vclock as _vc
+        _elapsed = _vc.real_now() - _t0
+        _vc.advance_seconds(_elapsed)
+        try:
+            import core as _core
+            _core.record_latency(_elapsed)
+        except Exception:                   # noqa: BLE001
+            pass
+    except Exception:                       # noqa: BLE001
+        pass
+    if not response:
+        return None
+    message = (response.get("choices") or [{}])[0].get("message") or {}
+    reasoning = str(message.get("reasoning_content") or "")
+    if reasoning:
+        log("judge.reasoning", text=reasoning[:1200])
+    content = message.get("content") or ""
+    log("judge.raw", chars=len(content), head=content[:200])
+    data = _parse(content)
+    if not isinstance(data, dict):
+        return None
+    if reasoning:
+        data["thinking"] = reasoning[:2000]
+
+    try:
+        duration = float(data.get("duration") or 0)      # 不能取整，7 秒是 0.12 分钟
+    except (TypeError, ValueError):
+        duration = 0
+    duration = max(1 / 60, float(duration))
+
+    instant = False
+    declared = str(declared_slot or data.get("slot") or "").strip().lower()
+    slot = declared if declared in ("short", "long", "event") else (
+        "short" if duration <= SHORT_LIMIT else "long")
+
+    log("judge", desc=description[:60], minutes=duration,
+        force=force, instant=instant,
+        busy=len([t for t in timers.load_timers()
+                  if t.get("kind") == "action" and float(t.get("at") or 0) > time.time()]))
+
+    if duration > 60:                        # 判超过一小时，记一笔便于排查
+        try:
+            import json as _json
+            long_log = _paths.data("tmp", "body_long.jsonl")
+            long_log.parent.mkdir(parents=True, exist_ok=True)
+            with long_log.open("a", encoding="utf-8") as handle:
+                handle.write(_json.dumps({"ts": time.strftime("%H:%M:%S"),
+                                          "minutes": duration,
+                                          "description": description},
+                                         ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    effort = str(data.get("effort") or "").strip()
+    location = str(data.get("location") or "").strip()
+
+    text = str(data.get("text") or "").strip()
+
+    return {
+        "duration": duration,
+        "instant": instant,
+        "effort": effort,
+        "slot": slot,
+        "slotId": timers.slot_id_for(slot),
+        "reward": _clean_reward(data.get("reward")),
+        "text": text,
+        "raw": data,
+    }
+
+
+def human_left_sec(seconds):
+    total = int(round(max(0.0, float(seconds))))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+
+def _alarm_minutes(text, now=None):
+    """把闹钟解析成分钟数。支持 "06:15"、"1:06:15"（1 = 明天）。"""
+    raw = str(text or "").strip().replace("：", ":")
+    parts = [p for p in raw.split(":") if p != ""]
+    if not parts:
+        return None
+    day = None
+    if len(parts) == 3:                 # D:HH:MM
+        try:
+            day = int(parts[0])
+            hour, minute = int(parts[1]), int(parts[2])
+        except ValueError:
+            return None
+    elif len(parts) == 2:               # HH:MM
+        try:
+            hour, minute = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+    else:
+        return None
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        return None
+    now = time.time() if now is None else float(now)
+    stamp = time.localtime(now)
+    target = time.mktime((stamp.tm_year, stamp.tm_mon, stamp.tm_mday,
+                          hour, minute, 0, 0, 0, -1))
+    if day is None:
+        if target <= now:
+            target += 24 * 3600         # 没写天：取下一个该时刻
+    elif day == 0:
+        if target < now:
+            return None                 # 今天这个点已经过了，说明写法有误
+    else:
+        target += 24 * 3600 * max(1, day)
+    return (target - now) / 60.0
+
+
+# ---------------- 异步受理 ----------------
+
+PROVISIONAL_MINUTES = 1.0          # 判定返回前的临时占位
+_JUDGE_QUEUE = queue.Queue()
+_WORKER_STARTED = False
+
+
+def _apply_judgement(job, verdict):
+    entries = timers.load_timers()
+    target = next((e for e in entries if e.get("id") == job["id"]), None)
+    if target is None:                       # 已被 force 撤掉
+        return
+    if verdict:
+        target["text"] = str(verdict.get("text") or job["description"])
+        target["reward"] = verdict.get("reward") or {}
+        if job.get("location"):
+            target["location"] = job.get("location")
+    else:
+        target["text"] = f"{job['description']}（完成）"
+    target.pop("pending", None)
+    target.pop("judging", None)
+    timers.save_timers(entries)
+
+
+def _worker():
+    while True:
+        job = _JUDGE_QUEUE.get()
+        try:
+            if job.get("kind") == "adjust":
+                _adjust_now()
+            else:
+                verdict = None
+                for _attempt in range(3):
+                    verdict = judge(job["description"],
+                                    declared_slot=job.get("slot") or "short",
+                                    location=job.get("location") or "")
+                    if verdict:
+                        break
+                    time.sleep(1.2 * (_attempt + 1))
+                _apply_judgement(job, verdict)
+        except Exception:                    # noqa: BLE001
+            if job.get("kind") != "adjust":
+                try:
+                    _apply_judgement(job, None)
+                except Exception:            # noqa: BLE001
+                    pass
+        finally:
+            _JUDGE_QUEUE.task_done()
+
+
+def _ensure_worker():
+    global _WORKER_STARTED
+    if _WORKER_STARTED:
+        return
+    _WORKER_STARTED = True
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def adjust_async():
+    """把一次生理调整排进 body worker；不阻塞主代理回合。"""
+    _ensure_worker()
+    _JUDGE_QUEUE.put({"kind": "adjust"})
+
+
+def submit(description, slot="short", *, location="", line="", force=False,
+           seconds=0, end=""):
+    """受理即建完整计时器；body 后台只补奖励与文本。"""
+    ch_now = timers.load_character()
+    if (ch_now.get("state") or {}).get("active") == "sleep":
+        return {"ok": False, "未执行": "角色正在睡眠，不能受理动作。"}
+    slot = str(slot or "").strip()
+    if slot not in ("short", "long", "event"):
+        slot = "short"
+    if str(end or "").strip() in ("long", "event"):
+        done = timers.finish_early(str(end).strip())
+        if done:
+            ratio = float(done["ratio"])
+            elapsed = float(done["elapsed"])
+            scaled = {}
+            if ratio >= 0.1 and elapsed >= 60:
+                for key, value in (done["entry"].get("reward") or {}).items():
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        continue
+                    scaled[key] = round(float(value) * ratio, 3)
+                if scaled:
+                    ch_now = timers.load_character()
+                    timers._apply_reward(ch_now, scaled)
+                    timers._write(timers.CHARACTER, ch_now)
+            log("finish_early", slot=end, ratio=round(ratio, 2),
+                seconds=int(elapsed), reward=scaled)
+
+    try:
+        timers.settle()
+    except Exception:                         # noqa: BLE001
+        pass
+    now = time.time()
+    running = [e for e in timers.load_timers()
+               if str(e.get("slotId") or "") == slot
+               and float(e.get("at") or 0) > now]
+    if running and not force:
+        return _reject(running)
+    if force and running:
+        timers.cancel(slot)
+    estimated = float(seconds or 0)
+    if estimated <= 0:
+        estimated = PROVISIONAL_MINUTES * 60
+    try:
+        entry = timers.add(kind="action", text=description,
+                           minutes=estimated / 60.0,
+                           semantic=description[:30], slot=slot,
+                           location=location or "", source="body")
+    except timers.SlotFull:
+        return _reject(timers.blocking_entries())
+    _ensure_worker()
+    _JUDGE_QUEUE.put({"id": entry.get("id"), "slot": slot,
+                      "description": description,
+                      "location": location or "", "line": line or ""})
+    if slot == "short":
+        return {"已执行": "动作已受理；完成情况写在 <state> 的「刚刚发生」中。",
+                "ok": True}
+    ends = time.strftime("%H:%M:%S", time.localtime(float(entry.get("at") or 0)))
+    left = human_left_sec(max(0.0, float(entry.get("at") or 0) - time.time()))
+    return {"已执行": f"{slot} 已受理，还剩 {left}，{ends} 完成。可以继续调工具，也可以写正文收口。",
+            "ok": True}
 
 
 def _sleep_threshold():
