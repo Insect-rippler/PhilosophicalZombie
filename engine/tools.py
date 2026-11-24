@@ -292,12 +292,10 @@ def virtual_active(raw_args):
     ch_now = timers.load_character()
     current = str(ch_now.get("local") or "").strip()
     if not location:
-        if slot == "short":
-            location = current
-        else:
-            return json.dumps({"ok": False, "reason":
-                               f"{slot} 必须带 location：到点时她应该处在的位置。"
-                               "补上 location 后重新递交。"}, ensure_ascii=False)
+        return json.dumps({"ok": False, "reason":
+                           "active 必须带 location：写动作结束时她所在的地点；"
+                           "原地动作也照抄 <state> 当前地点。补上后重新递交。"},
+                          ensure_ascii=False)
     move_note = ""
     if slot == "short" and location:
         import engine.worldmap as worldmap
