@@ -1042,10 +1042,17 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
             ERROR.append(f"[WARN] 图片上传失败 {issue}")
 
     if USER_LOOP:
-        MESSAGES.append({"role": "user", "name": "INFO", "content":
-            "[INFO] 当前处于用户对话loop中，请优先回应用户消息，若最新的用户消息已被回应"
-            "则可以结束本次loop或者继续调用工具推进演绎。注意用户无法在本次loop中发送任何消息，"
-            "需要用户回答时请优先结束本次loop。"})
+        if REPLY_PENDING:
+            info = ("[INFO] 最新一条是用户刚发来的消息，先正面回应它；"
+                    "回应必须写在正文或 line 里，不能只写在 thinking/动作里。"
+                    "用户无法在本次 loop 中再发消息，需要他回答时先收口。")
+        else:
+            info = ("[INFO] 这是用户对话上下文延续，但最新一条用户消息已经回应过。"
+                    "先看 session 最后一条：如果最后一条是 assistant 或 tool，"
+                    "不要重复回答旧 user，也不要重播上一轮台词；"
+                    "按 state 推进动作、写新的内容，或者直接结束本次 loop。"
+                    "只有最后一条是 user 时，才需要回应用户。")
+        MESSAGES.append({"role": "user", "name": "INFO", "content": info})
 
     registry = _tools.load_registry()
     tools = _tools.build_tools(registry)
@@ -1073,6 +1080,7 @@ COMPRESSION_THRESHOLD = int(
 
 
 USER_LOOP = False
+REPLY_PENDING = False
 LAST_PROMPT_TOKENS = 0     # 上一次请求的实际 prompt_tokens，压缩提示用
 
 

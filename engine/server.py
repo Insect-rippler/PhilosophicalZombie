@@ -440,7 +440,7 @@ def run_with_tools(payload, emit, stream_id=None):
         emit_pending()                     # 先动作，后台词
         # 用户对话 loop 里，只有动作、没有说出口的话，不算回应。
         # 最多补问两次，避免模型把答案永远留在 reasoning 里。
-        if (core.USER_LOOP and not spoken_line and not pending_text.strip()
+        if (core.REPLY_PENDING and not spoken_line and not pending_text.strip()
                 and no_speech_retries < 2):
             no_speech_retries += 1
             log("reply.missing_speech", round=_round + 1)
@@ -1032,6 +1032,7 @@ def idle_tick():
     kick_maintenance()
     timers.tick_lock()
     core.USER_LOOP = recent_user_turn(3)
+    core.REPLY_PENDING = False
     payload = core.context_assemble()
     stream_id = f"idle-{int(_tt.time() * 1000)}"
     chunks = []
@@ -1073,6 +1074,7 @@ def _run_user_turn(text):
         except Exception as exc:              # noqa: BLE001
             log("observe.failed", error=f"{type(exc).__name__}: {exc}"[:80])
         core.USER_LOOP = True
+        core.REPLY_PENDING = True
         payload = core.context_assemble()
         _, reply = run_with_tools(payload, emit, stream_id=stream_id)
         publish_stream_done(stream_id, str(reply or ""))
@@ -1083,6 +1085,7 @@ def _run_user_turn(text):
     finally:
         global TURN_BUSY
         core.USER_LOOP = False
+        core.REPLY_PENDING = False
         TURN_BUSY = False
         publish_view()
         try:
