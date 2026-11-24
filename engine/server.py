@@ -877,6 +877,28 @@ def sleeping():
     return (ch.get("state") or {}).get("active") == "sleep"
 
 
+
+def recent_user_turn(limit=3):
+    """最近 limit 条 assistant 回复内出现过用户消息，就仍算用户对话。"""
+    try:
+        rows = core.loadSession()
+    except Exception:                        # noqa: BLE001
+        return False
+    replies = 0
+    for row in reversed(rows or []):
+        role = row.get("role")
+        content = str(row.get("content") or "")
+        if role == "assistant":
+            if content.startswith("[INFO] session 历史提要："):
+                continue
+            if replies >= limit:
+                break
+            replies += 1
+        elif role == "user":
+            return True
+    return False
+
+
 def should_wake(now=None):
     """醒不醒：睡着时只由生理/闹钟醒，动作回执和静默都不叫醒。"""
     import time as _t
@@ -1009,7 +1031,7 @@ def idle_tick():
     runlog.log("turn.begin", kind="idle")
     kick_maintenance()
     timers.tick_lock()
-    core.USER_LOOP = False
+    core.USER_LOOP = recent_user_turn(3)
     payload = core.context_assemble()
     stream_id = f"idle-{int(_tt.time() * 1000)}"
     chunks = []
