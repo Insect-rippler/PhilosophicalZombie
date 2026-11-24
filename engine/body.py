@@ -264,8 +264,8 @@ def _body_thinking():
 SLOT_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}   # 分钟
 
 
-EFFORT_RATE = {"轻": 4.0, "中": 8.0, "重": 16.0}   # 每小时疲惫
-EFFORT_DEFAULT = 8.0
+EFFORT_RATE = {"轻": 4.0, "中": 7.5, "重": 16.0}   # 每小时疲惫
+EFFORT_DEFAULT = 7.5
 
 
 def effort_rate(level):
