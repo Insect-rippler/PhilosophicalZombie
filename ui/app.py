@@ -21,7 +21,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient, QPainte
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QPlainTextEdit,
-                               QPushButton, QGroupBox, QScrollArea, QSizePolicy, QSplitter, QGraphicsDropShadowEffect,
+                               QPushButton, QGroupBox, QScrollArea, QSizePolicy, QSplitter, QGraphicsDropShadowEffect, QGridLayout,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 BASE = os.environ.get("PZ_SERVER", "http://127.0.0.1:8765")
@@ -2183,18 +2183,29 @@ class CommPage(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(4, 8, 4, 8)
-        self.home_hint = QLabel("手机主屏")
-        self.home_hint.setObjectName("muted")
-        layout.addWidget(self.home_hint)
-        layout.addSpacing(8)
-        for app, label in self.APPS:
-            btn = QPushButton(label)
-            btn.setMinimumHeight(42)
-            btn.setStyleSheet("QPushButton { text-align: left; padding-left: 18px; "
-                              "border: 1px solid rgba(242,232,213,0.18); border-radius: 8px; }")
+        self.home_clock = QLabel("")
+        self.home_clock.setStyleSheet("QLabel { font-size: 34px; font-weight: 300; color: #f7ecd8; }")
+        self.home_clock.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.home_clock)
+        self.home_date = QLabel("")
+        self.home_date.setObjectName("muted")
+        self.home_date.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.home_date)
+        layout.addSpacing(12)
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        self._icons = {"chat": "✉", "moments": "✦", "diary": "✎", "status": "◉"}
+        for i, (app, label) in enumerate(self.APPS):
+            btn = QPushButton(f"{self._icons[app]}\n{label}")
+            btn.setMinimumHeight(76)
+            btn.setStyleSheet(
+                "QPushButton { border: 1px solid rgba(242,232,213,0.20); border-radius: 12px; "
+                "background: rgba(242,232,213,0.05); padding: 8px; } "
+                "QPushButton:hover { background: rgba(242,232,213,0.12); }")
             btn.clicked.connect(lambda checked=False, a=app: self._open(a))
             self._buttons[app] = btn
-            layout.addWidget(btn)
+            grid.addWidget(btn, i // 2, i % 2)
+        layout.addLayout(grid)
         layout.addStretch(1)
         return page
 
@@ -2258,12 +2269,17 @@ class CommPage(QWidget):
         return page
 
     def _refresh_home(self):
-        self.clock.setText(__import__("time").strftime("%H:%M"))
+        import time as _time
+        self.clock.setText(_time.strftime("%H:%M"))
+        if hasattr(self, "home_clock"):
+            self.home_clock.setText(_time.strftime("%H:%M"))
+            self.home_date.setText(_time.strftime("%Y.%m.%d"))
         for app, label in self.APPS:
+            icon = getattr(self, "_icons", {}).get(app, "")
             if app == "chat" and self._unread:
-                self._buttons[app].setText(f"{label}（{self._unread}）")
+                self._buttons[app].setText(f"{icon}\n{label}（{self._unread}）")
             else:
-                self._buttons[app].setText(label)
+                self._buttons[app].setText(f"{icon}\n{label}")
         self.home_hint.setText("手机主屏 · 只有未读消息显示 (1)")
         self.back.setVisible(self.stack.currentWidget() is not self.home)
         self.title.setText("通信设备")
@@ -2305,6 +2321,15 @@ class CommPage(QWidget):
         elif self.stack.currentWidget() is self.status_page:
             self._load_status()
 
+    def _avatar(self, who):
+        label = QLabel("漾" if who != "陆青禾" else "陆")
+        label.setFixedSize(28, 28)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(
+            "QLabel { background: rgba(231,197,138,0.16); border: 1px solid "
+            "rgba(231,197,138,0.36); border-radius: 14px; font-size: 11px; }")
+        return label
+
     def _load_thread(self):
         try:
             info = api_get("/phone?app=chat&limit=32")
@@ -2316,34 +2341,31 @@ class CommPage(QWidget):
             text = str(msg.get("text") or msg.get("caption") or "")
             kind = str(msg.get("kind") or "text")
             media = str(msg.get("media") or "")
-            if kind == "image" and media and Path(media).exists():
-                pix = QPixmap(media)
-                if pix.isNull():
-                    text = text or "[图片]"
-                else:
-                    text = "" if not text else text
-            elif kind == "image" and not text:
+            who = str(msg.get("from") or "")
+            if kind == "image" and not text:
                 text = "[图片]"
             elif kind == "voice" and not text:
                 text = "[语音]"
-            who = str(msg.get("from") or "")
             bubble = QLabel(text)
             bubble.setWordWrap(True)
-            bubble.setMaximumWidth(430)
+            bubble.setMaximumWidth(400)
             if kind == "image" and media and Path(media).exists():
                 pix = QPixmap(media)
                 if not pix.isNull():
-                    bubble.setPixmap(pix.scaled(360, 260, Qt.KeepAspectRatio,
+                    bubble.setPixmap(pix.scaled(320, 220, Qt.KeepAspectRatio,
                                                 Qt.SmoothTransformation))
                     bubble.setText("")
             bubble.setStyleSheet(
                 "QLabel { background: rgba(242,232,213,0.08); border: 1px solid "
                 "rgba(242,232,213,0.18); border-radius: 8px; padding: 7px 10px; }")
             row = QHBoxLayout()
+            avatar = self._avatar(who)
             if who == "陆青禾":
                 row.addStretch(1)
                 row.addWidget(bubble)
+                row.addWidget(avatar)
             else:
+                row.addWidget(avatar)
                 row.addWidget(bubble)
                 row.addStretch(1)
             self.thread_box.addLayout(row)
@@ -2359,9 +2381,25 @@ class CommPage(QWidget):
         except Exception:
             info = {}
         for msg in info.get("messages") or []:
-            label = QLabel(str(msg.get("text") or msg.get("caption") or "[媒体]"))
+            card = QFrame()
+            card.setObjectName("card")
+            box = QVBoxLayout(card)
+            stamp = QLabel(str(msg.get("ts") or ""))
+            stamp.setObjectName("stamp")
+            box.addWidget(stamp)
+            text = str(msg.get("text") or msg.get("caption") or "")
+            label = QLabel(text or "[媒体]")
             label.setWordWrap(True)
-            self.list_box.addWidget(label)
+            box.addWidget(label)
+            media = str(msg.get("media") or "")
+            if str(msg.get("kind") or "") == "image" and media and Path(media).exists():
+                pix = QPixmap(media)
+                if not pix.isNull():
+                    pic = QLabel()
+                    pic.setPixmap(pix.scaled(420, 280, Qt.KeepAspectRatio,
+                                             Qt.SmoothTransformation))
+                    box.addWidget(pic)
+            self.list_box.addWidget(card)
         self.list_box.addStretch(1)
 
     def _load_status(self):
