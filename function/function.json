@@ -644,7 +644,7 @@
         "type": "function",
         "function": {
             "name": "alarm",
-            "description": "设一个独立闹钟：到点提醒她，睡着就叫醒，醒着就提一句。和睡不睡无关，打铁、赶路、等人的时候都能设；只保留一个，新的覆盖旧的。",
+            "description": "设一个独立闹钟：到点提醒她，睡着就叫醒，醒着就提一句。和睡不睡无关；只保留一个，新的覆盖旧的。final=true 时设完不唤醒。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -655,6 +655,10 @@
                     "note": {
                         "type": "string",
                         "description": "可选，到点时显示给自己看的一句话。"
+                    },
+                    "final": {
+                        "type": "boolean",
+                        "description": "true = 闹钟设完后不触发下一次唤醒，只等到点响；同条其它工具仍按各自规则。"
                     }
                 },
                 "required": [

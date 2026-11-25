@@ -429,7 +429,14 @@ def run_with_tools(payload, emit, stream_id=None):
                 else:
                     other_wake = True
             if name not in ("active", "line", "pause", "sleep"):
-                if not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
+                alarm_final = False
+                if name == "alarm":
+                    try:
+                        alarm_final = bool(json.loads(args).get("final"))
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        alarm_final = False
+                if (not alarm_final
+                        and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS)):
                     other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
