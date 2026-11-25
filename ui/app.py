@@ -291,6 +291,15 @@ def wrap_to_px(text, fm, limit_px):
     return "\n".join(lines)
 
 
+def row_role(kind):
+    """一行消息的类型 → 气泡角色。view 行和实时事件共用这一套映射。"""
+    if kind in ("scene", "action", "narration"):
+        return "narration"
+    if kind == "line":
+        return "assistant"
+    return kind
+
+
 def wrap_chars(text, width=LIMIT_CHARS):
     """按字符数硬折行：每行不超过 width 个字。"""
     lines = []
@@ -749,6 +758,7 @@ class ChatPage(QWidget):
         self.user_name = "无名者"
         self._locked = False
         self._rendered_sig = None
+        self._view_claims = []
         self._timer_targets = []
         self._silence_at = 0
         self._idle_enabled = True
@@ -843,8 +853,34 @@ class ChatPage(QWidget):
                 out.append((kind, str(msg.get("text") or "")))
         return tuple(out)
 
+    def _sig_add(self, kind, text):
+        """把屏幕上新多出来的一行记进签名。
+
+        签名必须等于「屏幕上实际有什么」，不能只等于「上一次 view 有什么」：
+        实时事件、流式正文、乐观用户气泡都是真实存在的行，漏记就会在
+        下一次 view 增量追加时再画一遍。
+        """
+        if self._rendered_sig is None:
+            return
+        self._rendered_sig = tuple(self._rendered_sig) + ((kind, str(text)),)
+
+    def _claim_view_row(self, kind, text):
+        """认领刚由 view 补进来的那一行。
+
+        服务端写 session 时会立刻推 view（core.session_hooks），所以旁白常常
+        先以 view 行到达、几十毫秒后才有对应的实时 tool 事件。同一件事只该
+        画一次：实时事件认领到就跳过，保留 view 那一份。
+        """
+        row = (kind, str(text))
+        for index, item in enumerate(self._view_claims):
+            if item == row:
+                del self._view_claims[index]
+                return True
+        return False
+
     def _append_view_messages(self, messages):
         group = None
+        self._view_claims = []          # 只有这一批 view 行能被实时事件认领
         last = self.messages.itemAt(self.messages.count() - 2)
         if last is not None and isinstance(last.widget(), TipGroup):
             group = last.widget()
@@ -865,12 +901,9 @@ class ChatPage(QWidget):
             text = str(msg.get("text") or "")
             if not text:
                 continue
-            if kind in ("scene", "action", "narration"):
-                self.add_bubble("narration", text, ts=ts)
-            elif kind == "line":
-                self.add_bubble("assistant", text, ts=ts)
-            elif kind in ("user", "assistant"):
-                self.add_bubble(kind, text, ts=ts)
+            if kind in ("scene", "action", "narration", "line", "user", "assistant"):
+                self._view_claims.append((kind, text))
+                self.add_bubble(row_role(kind), text, ts=ts)
         if group is not None:
             group.collapse()
         from PySide6.QtCore import QTimer
@@ -901,10 +934,17 @@ class ChatPage(QWidget):
             self._vbar.setValue(self._vbar.maximum())
 
     def _on_stream_done(self, payload):
+        final = ""
         if isinstance(payload, dict):
             text = str(payload.get("text") or "")
             if self._stream_label is not None and text:
                 self._stream_label.setText(wrap_chars(text))
+                final = text
+        if self._stream_bubble is not None:
+            # 流式气泡就是视图里那条 assistant 行：记进签名，收尾 view 不再补一遍
+            final = (final or getattr(self, "_buffer", "")).strip()
+            if final:
+                self._sig_add("assistant", final)
         self._stream_active = False
         self._stream_bubble = None
         self._stream_label = None
@@ -945,6 +985,11 @@ class ChatPage(QWidget):
 
     def _render_view_messages(self, messages):
         self._clear_bubbles()
+        # 整页重建后屏幕内容 = 这份 view，实时气泡和流式气泡都已销毁
+        self._view_claims = []
+        self._stream_active = False
+        self._stream_bubble = None
+        self._stream_label = None
         group = None
         for msg in messages:
             if not isinstance(msg, dict):
@@ -963,12 +1008,8 @@ class ChatPage(QWidget):
             text = str(msg.get("text") or "")
             if not text:
                 continue
-            if kind in ("scene", "action", "narration"):
-                self.add_bubble("narration", text, ts=ts)
-            elif kind == "line":
-                self.add_bubble("assistant", text, ts=ts)
-            elif kind in ("user", "assistant"):
-                self.add_bubble(kind, text, ts=ts)
+            if kind in ("scene", "action", "narration", "line", "user", "assistant"):
+                self.add_bubble(row_role(kind), text, ts=ts)
         if group is not None:
             group.collapse()
         self._rendered_sig = self._message_signature(messages)
@@ -1296,6 +1337,7 @@ class ChatPage(QWidget):
         # 乐观显示；后端 view 到达前由 _pending_user 兜住
         self._pending_user = {"text": text}
         self.add_bubble("user", text)
+        self._sig_add("user", text)
         self.scroll_to_bottom()
         try:
             data = api_send("POST", "/turn", {"text": text})
@@ -1392,20 +1434,16 @@ class ChatPage(QWidget):
 
     def _on_tool(self, payload):
         kind = str(payload.get("kind") or "")
-        text = str(payload.get("text") or "")
+        text = str(payload.get("text") or "").strip()
         if not text:
             return
-        if kind == "scene":
-            self._above_stream("narration", text)
-            return
-        if kind == "action":
-            self._above_stream("narration", text)
-            return
-        if kind == "line":
-            self._above_stream("assistant", text)
-            return
-        if kind == "narration":
-            self._above_stream("narration", text)
+        if kind in ("scene", "action", "line", "narration"):
+            # active 的旁白进 session 时折成 narration 行，签名按 view 那一侧记
+            kind = "narration" if kind == "action" else kind
+            if self._claim_view_row(kind, text):
+                return                  # 这条 view 已经画过，实时事件不再补一遍
+            self._above_stream(row_role(kind), text)
+            self._sig_add(kind, text)
             return
         if self._tip_group is None:
             self._tip_group = TipGroup()
@@ -1448,6 +1486,7 @@ VISIBLE = {
     "harness.name", "harness.usage.maxTurn",
     "harness.idle.enabled", "harness.idle.afterMinutes",
     "harness.ui.splitMessages",
+    "harness.session.stripReasoning",
     "harness.retrieval.queryTurns.withMessage",
     "harness.retrieval.queryTurns.maxChars",
     "harness.retrieval.memory.topK",
@@ -1518,6 +1557,7 @@ LABELS = {
     "harness.usage.avgWindow": "平均命中窗口",
     "harness.session.compressionThreshold": "压缩阈值",
     "harness.session.retainedTrun": "保留轮次",
+    "harness.session.stripReasoning": "组装时剔除 reasoning",
     "harness.subprocess.timeout": "工具超时",
     "harness.loop.maxRounds": "循环上限",
     "harness.loop.maxToolOutput": "工具输出上限",
