@@ -68,7 +68,7 @@ EMOTION_CENTER = 120.0
 EMOTION_LOCK_LOW = 30.0        # 再往下就进「低落」，先锁住
 EMOTION_LOCK_HIGH = 200.0      # 再往上就进「昂扬」，先锁住
 EMOTION_LOCK_COOLDOWN = 6      # 越界后静默的轮数
-EMOTION_DRIFT_BASE = 1.5       # 每小时回归基准（点）
+EMOTION_DRIFT_BASE = 6.0       # 每小时回归基准（点）
 EMOTION_DRIFT = {"低落": 1.0, "戒备": 1.5, "正常": 0.4,
                  "高涨": 1.5, "昂扬": 1.0}
 
