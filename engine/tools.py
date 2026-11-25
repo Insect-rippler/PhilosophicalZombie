@@ -210,7 +210,7 @@ def virtual_phone(raw_args):
     except json.JSONDecodeError:
         return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
     action = str(args.get("action") or "apps").strip().lower()
-    app = str(args.get("app") or "chat").strip().lower()
+    app = str(args.get("app") or ("moments" if action == "publish" else "chat")).strip().lower()
     wake = bool(args.get("wake") is True or str(args.get("wake")).lower() in ("true", "1", "yes"))
     try:
         if action == "apps":
@@ -248,7 +248,8 @@ def virtual_phone(raw_args):
         if action == "publish":
             return json.dumps(phone_store.publish(app, args.get("text") or "",
                                                   args.get("media") or "",
-                                                  args.get("caption") or ""),
+                                                  args.get("caption") or "",
+                                                  args.get("kind") or "text"),
                               ensure_ascii=False)
     except Exception as exc:                      # noqa: BLE001
         return json.dumps({"ok": False, "reason": f"{type(exc).__name__}: {exc}"},

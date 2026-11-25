@@ -192,7 +192,7 @@ def send(text="", kind="text", media="", caption=""):
             "line": len(_read("chat"))}
 
 
-def publish(app="moments", text="", media="", caption=""):
+def publish(app="moments", text="", media="", caption="", kind="text"):
     if app not in ("moments", "diary"):
         return {"ok": False, "reason": "publish 只支持 moments 或 diary"}
     text = str(text or "").strip()
@@ -204,7 +204,7 @@ def publish(app="moments", text="", media="", caption=""):
         return {"ok": False, "reason": "media 只能使用手机媒体库里的素材"}
     row = {
         "from": "陆青禾",
-        "kind": str(kind_or_text(media) if media else "text"),
+        "kind": str(kind or (kind_or_text(media) if media else "text")),
         "text": text,
         "media": safe_media,
         "caption": caption,
