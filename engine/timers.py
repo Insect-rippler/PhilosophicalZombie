@@ -963,6 +963,14 @@ def render_state(ch=None, pending="", now=None, full=False):
         span = max(0.0, moment - last_action)
         lines.append(f"距上一次行动已过去 {_hms(span)}。")
 
+    try:
+        import phone as _phone
+        unread = _phone.unread_count("chat")
+        if unread:
+            lines.append(f"手机消息（{unread}）。只看这个提示；内容要她自己用 phone 查看。")
+    except Exception:                         # noqa: BLE001
+        pass
+
     local = str(ch.get("local") or "").strip()
     if local:
         risk_text = ""

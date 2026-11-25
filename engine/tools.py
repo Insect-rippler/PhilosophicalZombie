@@ -12,6 +12,7 @@ from pathlib import Path
 
 import core
 import paths as _paths
+import phone as phone_store
 import combat
 import body
 import timers
@@ -199,6 +200,60 @@ def virtual_alarm(raw_args):
     return json.dumps({"已执行": f"闹钟已设：{ends}（约 {left}后）。", "ok": True},
                       ensure_ascii=False)
 
+
+
+
+def virtual_phone(raw_args):
+    """本机手机：查看消息、发消息、发动态/日记。默认不唤醒。"""
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+    except json.JSONDecodeError:
+        return json.dumps({"ok": False, "reason": "参数不是合法 JSON"}, ensure_ascii=False)
+    action = str(args.get("action") or "apps").strip().lower()
+    app = str(args.get("app") or "chat").strip().lower()
+    wake = bool(args.get("wake") is True or str(args.get("wake")).lower() in ("true", "1", "yes"))
+    try:
+        if action == "apps":
+            return json.dumps(phone_store.apps_payload(), ensure_ascii=False)
+        if action == "list":
+            data = phone_store.list_messages(app, args.get("limit") or 8)
+            if not wake:
+                return json.dumps({"ok": True, "app": app, "unread": data.get("unread", 0),
+                                   "note": "list 默认不唤醒；需要看内容请带 wake=true。"}, ensure_ascii=False)
+            return json.dumps(data, ensure_ascii=False)
+        if action == "search":
+            data = phone_store.search_messages(app, args.get("query") or "",
+                                               args.get("limit") or 4)
+            if not wake:
+                return json.dumps({"ok": True, "app": app,
+                                   "unread": phone_store.unread_count(app),
+                                   "note": "search 默认不唤醒；需要看结果请带 wake=true。"},
+                                  ensure_ascii=False)
+            return json.dumps(data, ensure_ascii=False)
+        if action == "read":
+            data = phone_store.read_messages(app, args.get("line") or 0,
+                                              args.get("around") or 2, mark=wake)
+            if not wake:
+                return json.dumps({"ok": True, "app": app,
+                                   "unread": phone_store.unread_count(app),
+                                   "note": "read 默认不唤醒；需要看内容请带 wake=true。"},
+                                  ensure_ascii=False)
+            return json.dumps(data, ensure_ascii=False)
+        if action == "send":
+            return json.dumps(phone_store.send(args.get("text") or "",
+                                               args.get("kind") or "text",
+                                               args.get("media") or "",
+                                               args.get("caption") or ""),
+                              ensure_ascii=False)
+        if action == "publish":
+            return json.dumps(phone_store.publish(app, args.get("text") or "",
+                                                  args.get("media") or "",
+                                                  args.get("caption") or ""),
+                              ensure_ascii=False)
+    except Exception as exc:                      # noqa: BLE001
+        return json.dumps({"ok": False, "reason": f"{type(exc).__name__}: {exc}"},
+                          ensure_ascii=False)
+    return json.dumps({"ok": False, "reason": "unknown action"}, ensure_ascii=False)
 
 def virtual_map(raw_args):
     """地图查询与维护。日常只开放 query/create/link；dream 才开放全量。"""
@@ -464,4 +519,5 @@ def virtual_line(raw_args):
 VIRTUAL_HANDLERS.update({"active": virtual_active, "fight": virtual_fight,
                          "alarm": virtual_alarm,
                          "emotion": virtual_emotion,
-                         "line": virtual_line})
+                         "line": virtual_line,
+                         "phone": virtual_phone})

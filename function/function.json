@@ -739,6 +739,83 @@
     {
         "type": "function",
         "function": {
+            "name": "phone",
+            "description": "本机手机：查看漾涟孑发来的消息、查看动态/日记、发送文字/图片/语音、发布动态或日记。默认 wake=false，不触发下一拍；读取类操作要带 wake=true 才能看到结果。手机内容不进入主会话界面。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "apps",
+                            "list",
+                            "search",
+                            "read",
+                            "send",
+                            "publish"
+                        ],
+                        "description": "要做什么。"
+                    },
+                    "app": {
+                        "type": "string",
+                        "enum": [
+                            "chat",
+                            "moments",
+                            "diary"
+                        ],
+                        "description": "应用；默认 chat。"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "list 默认 8，最多 32。"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "search 的关键词；只看最新 4 条匹配。"
+                    },
+                    "line": {
+                        "type": "integer",
+                        "description": "read 的消息行号，从 1 开始。"
+                    },
+                    "around": {
+                        "type": "integer",
+                        "description": "read 前后各看几条，默认 2，最多 8。"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "send/publish 的正文。"
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "text",
+                            "image",
+                            "voice"
+                        ],
+                        "description": "消息类型；默认 text。"
+                    },
+                    "media": {
+                        "type": "string",
+                        "description": "手机媒体库里的图片/语音素材。"
+                    },
+                    "caption": {
+                        "type": "string",
+                        "description": "图片/语音说明。"
+                    },
+                    "wake": {
+                        "type": "boolean",
+                        "description": "默认 false；读取后要继续叫模型时设 true。"
+                    }
+                },
+                "required": [
+                    "action"
+                ]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "map",
             "description": "她的地图。action=query 查当前地点到 target 的前三条路线；action=create 用 target/risk/time 新建相邻节点并连到当前地点；action=link 用 target/link/time 新建或修改两地连线。日常只有这三种；dream 才开放 unlink/set_risk/delete/merge。",
             "parameters": {

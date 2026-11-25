@@ -2132,24 +2132,265 @@ class NavButton(QWidget):
                 painter.drawEllipse(cx + knob - 2, y - 2, 4, 4)
 
 class CommPage(QWidget):
-    """通信设备：占位页，保持与主会话相同的透明容器风格。"""
+    """通信设备：手机主屏 + 本机社交应用。手机内容不进主会话。"""
+
+    APPS = (("chat", "消息"), ("moments", "动态"), ("diary", "日记"), ("status", "状态"))
 
     def __init__(self):
         super().__init__()
+        self._app = "chat"
+        self._unread = 0
+        self._buttons = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 18, 28, 14)
         shell = QFrame()
         shell.setObjectName("chatShell")
         box = QVBoxLayout(shell)
-        box.setContentsMargins(24, 20, 24, 20)
-        title = QLabel("通信设备")
-        title.setObjectName("h1")
-        box.addWidget(title)
-        hint = QLabel("尚未接入通信设备。")
-        hint.setObjectName("muted")
-        box.addWidget(hint)
-        box.addStretch(1)
+        box.setContentsMargins(20, 16, 20, 16)
+        box.setSpacing(10)
+
+        bar = QHBoxLayout()
+        self.back = QPushButton("←")
+        self.back.setFixedWidth(36)
+        self.back.clicked.connect(self._home)
+        bar.addWidget(self.back)
+        self.title = QLabel("通信设备")
+        self.title.setObjectName("h1")
+        bar.addWidget(self.title)
+        bar.addStretch(1)
+        self.clock = QLabel("")
+        self.clock.setObjectName("info")
+        bar.addWidget(self.clock)
+        box.addLayout(bar)
+
+        self.stack = QStackedWidget()
+        box.addWidget(self.stack, 1)
+        self.home = self._make_home()
+        self.chat = self._make_chat()
+        self.list_page = self._make_list_page()
+        self.status_page = self._make_status_page()
+        for page in (self.home, self.chat, self.list_page, self.status_page):
+            self.stack.addWidget(page)
         outer.addWidget(shell, 1)
+        self._timer = QTimer(self)
+        self._timer.setInterval(1500)
+        self._timer.timeout.connect(self._poll)
+        self._timer.start()
+        self._refresh_home()
+
+    def _make_home(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 8, 4, 8)
+        self.home_hint = QLabel("手机主屏")
+        self.home_hint.setObjectName("muted")
+        layout.addWidget(self.home_hint)
+        layout.addSpacing(8)
+        for app, label in self.APPS:
+            btn = QPushButton(label)
+            btn.setMinimumHeight(42)
+            btn.setStyleSheet("QPushButton { text-align: left; padding-left: 18px; "
+                              "border: 1px solid rgba(242,232,213,0.18); border-radius: 8px; }")
+            btn.clicked.connect(lambda checked=False, a=app: self._open(a))
+            self._buttons[app] = btn
+            layout.addWidget(btn)
+        layout.addStretch(1)
+        return page
+
+    def _make_chat(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.chat_head = QLabel("漾涟孑")
+        self.chat_head.setObjectName("group")
+        layout.addWidget(self.chat_head)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        self.thread_host = QWidget()
+        self.thread_box = QVBoxLayout(self.thread_host)
+        self.thread_box.setContentsMargins(2, 2, 2, 2)
+        self.thread_box.setSpacing(5)
+        self.thread_box.addStretch(1)
+        scroll.setWidget(self.thread_host)
+        self.thread_scroll = scroll
+        layout.addWidget(scroll, 1)
+        row = QHBoxLayout()
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("说点什么...")
+        self.input.returnPressed.connect(self._send)
+        row.addWidget(self.input, 1)
+        send = QPushButton("发送")
+        send.clicked.connect(self._send)
+        row.addWidget(send)
+        layout.addLayout(row)
+        return page
+
+    def _make_list_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        self.list_title = QLabel("")
+        self.list_title.setObjectName("group")
+        layout.addWidget(self.list_title)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        host = QWidget()
+        self.list_box = QVBoxLayout(host)
+        self.list_box.setContentsMargins(2, 2, 2, 2)
+        self.list_box.setSpacing(5)
+        self.list_box.addStretch(1)
+        scroll.setWidget(host)
+        layout.addWidget(scroll, 1)
+        return page
+
+    def _make_status_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        layout.addStretch(1)
+        return page
+
+    def _refresh_home(self):
+        self.clock.setText(__import__("time").strftime("%H:%M"))
+        for app, label in self.APPS:
+            if app == "chat" and self._unread:
+                self._buttons[app].setText(f"{label}（{self._unread}）")
+            else:
+                self._buttons[app].setText(label)
+        self.home_hint.setText("手机主屏 · 只有未读消息显示 (1)")
+        self.back.setVisible(self.stack.currentWidget() is not self.home)
+        self.title.setText("通信设备")
+
+    def _open(self, app):
+        self._app = app
+        self.back.setVisible(True)
+        if app == "chat":
+            self.title.setText("消息")
+            self.stack.setCurrentWidget(self.chat)
+            self._load_thread()
+        elif app in ("moments", "diary"):
+            self.title.setText("动态" if app == "moments" else "日记")
+            self.stack.setCurrentWidget(self.list_page)
+            self._load_list()
+        elif app == "status":
+            self.title.setText("状态")
+            self.stack.setCurrentWidget(self.status_page)
+            self._load_status()
+
+    def _home(self):
+        self.stack.setCurrentWidget(self.home)
+        self._app = ""
+        self._refresh_home()
+        self._poll()
+
+    def _poll(self):
+        try:
+            info = api_get("/phone")
+            self._unread = int(info.get("unread") or 0)
+        except Exception:
+            return
+        if self.stack.currentWidget() is self.home:
+            self._refresh_home()
+        elif self.stack.currentWidget() is self.chat:
+            self._load_thread()
+        elif self.stack.currentWidget() is self.list_page:
+            self._load_list()
+        elif self.stack.currentWidget() is self.status_page:
+            self._load_status()
+
+    def _load_thread(self):
+        try:
+            info = api_get("/phone?app=chat&limit=32")
+        except Exception:
+            return
+        self._unread = int(info.get("unread") or 0)
+        self._clear_thread()
+        for msg in info.get("messages") or []:
+            text = str(msg.get("text") or msg.get("caption") or "")
+            kind = str(msg.get("kind") or "text")
+            if kind == "image" and not text:
+                text = "[图片]"
+            elif kind == "voice" and not text:
+                text = "[语音]"
+            who = str(msg.get("from") or "")
+            bubble = QLabel(text)
+            bubble.setWordWrap(True)
+            bubble.setMaximumWidth(430)
+            bubble.setStyleSheet(
+                "QLabel { background: rgba(242,232,213,0.08); border: 1px solid "
+                "rgba(242,232,213,0.18); border-radius: 8px; padding: 7px 10px; }")
+            row = QHBoxLayout()
+            if who == "陆青禾":
+                row.addStretch(1)
+                row.addWidget(bubble)
+            else:
+                row.addWidget(bubble)
+                row.addStretch(1)
+            self.thread_box.addLayout(row)
+        self.thread_box.addStretch(1)
+        QTimer.singleShot(0, lambda: self.thread_scroll.verticalScrollBar().setValue(
+            self.thread_scroll.verticalScrollBar().maximum()))
+
+    def _load_list(self):
+        self.list_title.setText("动态" if self._app == "moments" else "日记")
+        self._clear_box(self.list_box)
+        try:
+            info = api_get(f"/phone?app={self._app}&limit=32")
+        except Exception:
+            info = {}
+        for msg in info.get("messages") or []:
+            label = QLabel(str(msg.get("text") or msg.get("caption") or "[媒体]"))
+            label.setWordWrap(True)
+            self.list_box.addWidget(label)
+        self.list_box.addStretch(1)
+
+    def _load_status(self):
+        try:
+            info = api_get("/view")
+        except Exception as error:
+            self.status_label.setText(f"读取失败：{error}")
+            return
+        st = info.get("state") or {}
+        self.status_label.setText(
+            f"位置：{st.get('location', '')}\n"
+            f"状态：{st.get('status', '')}\n"
+            f"身体：{st.get('metabolismText', '')}")
+
+    def _clear_thread(self):
+        while self.thread_box.count():
+            item = self.thread_box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+
+    def _clear_box(self, box):
+        while box.count():
+            item = box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+
+    def _send(self):
+        text = self.input.text().strip()
+        if not text:
+            return
+        try:
+            api_send("POST", "/phone/send", {"text": text})
+        except Exception:
+            return
+        self.input.clear()
+        self._load_thread()
 
 class WindowControls(QWidget):
     """无边框窗口的最小化/最大化/关闭，固定在右下角。"""

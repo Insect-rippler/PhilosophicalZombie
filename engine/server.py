@@ -398,7 +398,7 @@ def run_with_tools(payload, emit, stream_id=None):
             kind, label = describe_tool(name, args, output)
             if name == "active":
                 emit("tool", {"kind": "action", "name": name, "text": label})   # 2 动作
-            elif name not in ("line", "pause"):
+            elif name not in ("line", "pause", "phone"):
                 emit("tool", {"kind": kind, "name": name, "text": label})
             if name == "line":
                 try:
@@ -430,13 +430,24 @@ def run_with_tools(payload, emit, stream_id=None):
                     other_wake = True
             if name not in ("active", "line", "pause", "sleep"):
                 alarm_final = False
+                phone_wake = False
                 if name == "alarm":
                     try:
                         alarm_final = bool(json.loads(args).get("final"))
                     except (json.JSONDecodeError, TypeError, AttributeError):
                         alarm_final = False
-                if (not alarm_final
-                        and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS)):
+                elif name == "phone":
+                    try:
+                        pa = json.loads(args)
+                        phone_wake = bool(pa.get("wake") is True
+                                          or str(pa.get("wake")).lower() in ("true", "1", "yes"))
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        phone_wake = False
+                if name == "phone":
+                    if phone_wake and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
+                        other_wake = True
+                elif (not alarm_final
+                      and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS)):
                     other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
@@ -536,6 +547,9 @@ def session_history(limit=40, with_total=False):
         if role == "tool":
             continue
         if role == "assistant" and item.get("tool_calls"):
+            names = {(c.get("function") or {}).get("name") for c in item["tool_calls"]}
+            if "phone" in names:
+                continue
             for call in item["tool_calls"]:
                 name = (call.get("function") or {}).get("name") or ""
                 if name == "active":
@@ -1453,6 +1467,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(build_view())
         if path == "/events":
             return self._events()
+        if path == "/phone":
+            query = urllib.parse.parse_qs(parsed.query)
+            app = (query.get("app") or ["chat"])[0]
+            try:
+                limit = int((query.get("limit") or ["32"])[0])
+            except ValueError:
+                limit = 32
+            import phone as phone_store
+            return self._json(phone_store.ui_payload(app, limit=limit))
         if path == "/state":
             return self._json(state_snapshot())
         if path == "/config":
@@ -1484,6 +1507,14 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             name = str((data or {}).get("action") or "").strip()
             return self._json(start_job(name))
+        if path == "/phone/send":
+            data = self._body()
+            import phone as phone_store
+            return self._json(phone_store.append_incoming(
+                str((data or {}).get("text") or ""),
+                str((data or {}).get("kind") or "text"),
+                str((data or {}).get("media") or ""),
+                str((data or {}).get("caption") or "")))
         if path == "/config":
             return self._save_config(self._body())
         if path == "/skill":
