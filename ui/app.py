@@ -2079,16 +2079,18 @@ class NavButton(QWidget):
                          self.label)
         if self._badge:
             text = "9+" if self._badge > 9 else str(self._badge)
-            badge = self.rect().adjusted(self.width() - 24, 2, -2, 22)
+            size = 16
+            x = self.width() - size - 6
+            y = 5
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor("#e7c58a"))
-            painter.drawEllipse(badge.adjusted(2, 0, -2, -2))
+            painter.drawEllipse(x, y, size, size)
             painter.setPen(QPen(QColor("#18130d"), 1))
             font = painter.font()
-            font.setPointSizeF(7.0)
+            font.setPointSizeF(6.8)
             font.setBold(True)
             painter.setFont(font)
-            painter.drawText(badge, Qt.AlignCenter, text)
+            painter.drawText(x, y, size, size, Qt.AlignCenter, text)
 
     @staticmethod
     def _icon(painter, key, cx, cy, size, color):
@@ -2339,8 +2341,10 @@ class CommPage(QWidget):
     def _poll(self):
         try:
             info = api_get("/phone")
-            self._set_unread(info.get("unread") or 0)
+            self._set_unread(info.get("userUnread") or 0)
         except Exception:
+            return
+        if not self.isVisible():
             return
         if self.stack.currentWidget() is self.home:
             self._refresh_home()
@@ -2365,7 +2369,7 @@ class CommPage(QWidget):
             info = api_get("/phone?app=chat&limit=32")
         except Exception:
             return
-        self._set_unread(info.get("unread") or 0)
+        self._set_unread(info.get("userUnread") or 0)
         self._clear_thread()
         for msg in info.get("messages") or []:
             text = str(msg.get("text") or msg.get("caption") or "")
@@ -2400,6 +2404,11 @@ class CommPage(QWidget):
                 row.addStretch(1)
             self.thread_box.addLayout(row)
         self.thread_box.addStretch(1)
+        try:
+            api_send("POST", "/phone/user-read", {"app": "chat"})
+            self._set_unread(0)
+        except Exception:
+            pass
         QTimer.singleShot(0, lambda: self.thread_scroll.verticalScrollBar().setValue(
             self.thread_scroll.verticalScrollBar().maximum()))
 

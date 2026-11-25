@@ -103,14 +103,32 @@ def unread_count(app=DEFAULT_APP):
                if str(item.get("from") or "") == "漾涟孑" and i not in read)
 
 
+def user_unread_count(app=DEFAULT_APP):
+    """给界面看的未读：只算陆青禾发出、用户还没点开的消息。"""
+    rows = _message_rows(app, _read(app))
+    data = _read_state()
+    last = int((data.get("ui_read") or {}).get(app) or 0)
+    return sum(1 for row in rows
+               if row.get("from") == "陆青禾" and row.get("line") > last)
+
+
+def mark_user_read(app=DEFAULT_APP):
+    data = _read_state()
+    data.setdefault("ui_read", {})[app] = len(_read(app))
+    _write_state(data)
+    return {"ok": True, "app": app, "userUnread": 0}
+
+
 def apps_payload():
     return {
         "ok": True,
         "apps": [
-            {"id": app, "name": name, "unread": unread_count(app)}
+            {"id": app, "name": name, "unread": unread_count(app),
+             "userUnread": user_unread_count(app)}
             for app, name in APPS.items()
         ],
         "unread": unread_count("chat"),
+        "userUnread": user_unread_count("chat"),
     }
 
 
@@ -277,4 +295,5 @@ def ui_payload(app=DEFAULT_APP, limit=32):
     payload = apps_payload()
     payload["app"] = app
     payload["messages"] = list_messages(app, limit)["lines"]
+    payload["userUnread"] = user_unread_count(app)
     return payload
