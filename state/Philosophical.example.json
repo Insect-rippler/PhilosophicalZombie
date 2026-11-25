@@ -27,7 +27,8 @@
         },
         "session": {
             "compressionThreshold": 340000,
-            "retainedTrun": 8
+            "retainedTrun": 8,
+            "stripReasoning": false
         },
         "subprocess": {
             "timeout": 300

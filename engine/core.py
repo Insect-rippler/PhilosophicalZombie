@@ -162,6 +162,9 @@ SLICE_FLOOR = _num("retrieval.memory.sliceFloor", 0.55, float)
 SLICE_MARGIN = _num("retrieval.memory.sliceMargin", 0.08, float)
 BLOCK_FLOOR = _num("retrieval.memory.blockFloor", 0.40, float)
 
+# 组装上下文时是否把历史 assistant 的 reasoning 一起发给模型；默认保留。
+STRIP_REASONING = bool(harness_cfg("session.stripReasoning", False))
+
 
 # api key 不是请求体参数：单独拿出，组装出的 payload 里不含它
 API_KEY = payload.pop("api", "")
@@ -220,6 +223,11 @@ def loadSession(path=SESSION_PATH):
     return session
 
 
+def strip_reasoning(session):
+    """只在组装给模型的上下文里去掉 reasoning；session 文件原样保留。"""
+    for msg in session or []:
+        msg.pop("reasoning_content", None)
+    return session
 
 
 # 历史里的标签块不该进入检索查询
@@ -972,6 +980,8 @@ def context_assemble(user_message=None, *, session_path=SESSION_PATH, record=Tru
         pass
 
     session = loadSession(session_path)
+    if STRIP_REASONING:
+        strip_reasoning(session)
 
     if isinstance(user_message, str):
         user_message = {"role": "user", "name": payload.get("user_id", ""),
