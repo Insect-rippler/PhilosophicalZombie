@@ -12,6 +12,7 @@
     PUT  /realm/<名>  写回文件原文
 """
 
+import base64
 import json
 import queue
 import re as _re
@@ -1508,6 +1509,26 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             name = str((data or {}).get("action") or "").strip()
             return self._json(start_job(name))
+        if path == "/phone/upload":
+            data = self._body() or {}
+            raw = str(data.get("data") or "")
+            name = Path(str(data.get("name") or "image.png")).name
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            try:
+                payload = base64.b64decode(raw, validate=True)
+            except Exception:                 # noqa: BLE001
+                return self._json({"ok": False, "reason": "图片数据无效"}, 400)
+            if len(payload) > 12 * 1024 * 1024:
+                return self._json({"ok": False, "reason": "图片超过 12MB"}, 400)
+            suffix = Path(name).suffix.lower()
+            if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                suffix = ".png"
+            import phone as phone_store
+            phone_store.MEDIA.mkdir(parents=True, exist_ok=True)
+            dest = phone_store.MEDIA / f"upload-{int(time.time() * 1000)}-{name}"
+            dest.write_bytes(payload)
+            return self._json({"ok": True, "media": str(dest)})
         if path == "/phone/send":
             data = self._body()
             import phone as phone_store

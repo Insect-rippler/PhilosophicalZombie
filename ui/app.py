@@ -8,6 +8,7 @@
 后端要先跑：python engine/server.py
 """
 
+import base64
 import json
 import math
 import os
@@ -2220,6 +2221,9 @@ class CommPage(QWidget):
         self.input.setPlaceholderText("说点什么...")
         self.input.returnPressed.connect(self._send)
         row.addWidget(self.input, 1)
+        image_btn = QPushButton("图片")
+        image_btn.clicked.connect(self._send_image)
+        row.addWidget(image_btn)
         send = QPushButton("发送")
         send.clicked.connect(self._send)
         row.addWidget(send)
@@ -2311,7 +2315,14 @@ class CommPage(QWidget):
         for msg in info.get("messages") or []:
             text = str(msg.get("text") or msg.get("caption") or "")
             kind = str(msg.get("kind") or "text")
-            if kind == "image" and not text:
+            media = str(msg.get("media") or "")
+            if kind == "image" and media and Path(media).exists():
+                pix = QPixmap(media)
+                if pix.isNull():
+                    text = text or "[图片]"
+                else:
+                    text = "" if not text else text
+            elif kind == "image" and not text:
                 text = "[图片]"
             elif kind == "voice" and not text:
                 text = "[语音]"
@@ -2319,6 +2330,12 @@ class CommPage(QWidget):
             bubble = QLabel(text)
             bubble.setWordWrap(True)
             bubble.setMaximumWidth(430)
+            if kind == "image" and media and Path(media).exists():
+                pix = QPixmap(media)
+                if not pix.isNull():
+                    bubble.setPixmap(pix.scaled(360, 260, Qt.KeepAspectRatio,
+                                                Qt.SmoothTransformation))
+                    bubble.setText("")
             bubble.setStyleSheet(
                 "QLabel { background: rgba(242,232,213,0.08); border: 1px solid "
                 "rgba(242,232,213,0.18); border-radius: 8px; padding: 7px 10px; }")
@@ -2396,6 +2413,31 @@ class CommPage(QWidget):
             return
         try:
             api_send("POST", "/phone/send", {"text": text})
+        except Exception:
+            return
+        self.input.clear()
+        self._load_thread()
+
+    def _send_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择图片", "", "图片 (*.png *.jpg *.jpeg *.webp *.gif)")
+        if not path:
+            return
+        try:
+            raw = Path(path).read_bytes()
+            if len(raw) > 12 * 1024 * 1024:
+                return
+            uploaded = api_send("POST", "/phone/upload", {
+                "name": Path(path).name,
+                "data": base64.b64encode(raw).decode("ascii"),
+            })
+            if not uploaded.get("ok"):
+                return
+            api_send("POST", "/phone/send", {
+                "kind": "image",
+                "media": uploaded.get("media") or "",
+                "caption": self.input.text().strip(),
+            })
         except Exception:
             return
         self.input.clear()
