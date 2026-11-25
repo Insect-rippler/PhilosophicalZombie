@@ -18,10 +18,10 @@
         "logprobs": false,
         "top_logprobs": 0,
         "tools": [],
-        "user_id": "漾涟·孑"
+        "user_id": "user"
     },
     "harness": {
-        "name": "涟·梦露",
+        "name": "陆青禾",
         "usage": {
             "maxTurn": 100
         },
