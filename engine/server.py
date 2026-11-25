@@ -1529,6 +1529,12 @@ class Handler(BaseHTTPRequestHandler):
             dest = phone_store.MEDIA / f"upload-{int(time.time() * 1000)}-{name}"
             dest.write_bytes(payload)
             return self._json({"ok": True, "media": str(dest)})
+        if path == "/phone/like":
+            data = self._body() or {}
+            import phone as phone_store
+            return self._json(phone_store.toggle_like(
+                str(data.get("app") or "moments"),
+                data.get("line") or 0))
         if path == "/phone/send":
             data = self._body()
             import phone as phone_store

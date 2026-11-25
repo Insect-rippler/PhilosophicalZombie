@@ -2030,6 +2030,7 @@ class NavButton(QWidget):
         self.label = label
         self._active = False
         self._hover = False
+        self._badge = 0
         self.setFixedSize(64, 70)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(label)
@@ -2038,6 +2039,12 @@ class NavButton(QWidget):
     def set_active(self, on):
         if self._active != bool(on):
             self._active = bool(on)
+            self.update()
+
+    def set_badge(self, count):
+        count = max(0, int(count or 0))
+        if self._badge != count:
+            self._badge = count
             self.update()
 
     def enterEvent(self, event):
@@ -2070,6 +2077,18 @@ class NavButton(QWidget):
         painter.setFont(font)
         painter.drawText(self.rect().adjusted(0, 48, 0, 0), Qt.AlignHCenter | Qt.AlignTop,
                          self.label)
+        if self._badge:
+            text = "9+" if self._badge > 9 else str(self._badge)
+            badge = self.rect().adjusted(self.width() - 24, 2, -2, 22)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#e7c58a"))
+            painter.drawEllipse(badge.adjusted(2, 0, -2, -2))
+            painter.setPen(QPen(QColor("#18130d"), 1))
+            font = painter.font()
+            font.setPointSizeF(7.0)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(badge, Qt.AlignCenter, text)
 
     @staticmethod
     def _icon(painter, key, cx, cy, size, color):
@@ -2135,6 +2154,7 @@ class NavButton(QWidget):
 class CommPage(QWidget):
     """通信设备：手机主屏 + 本机社交应用。手机内容不进主会话。"""
 
+    unreadChanged = Signal(int)
     APPS = (("chat", "消息"), ("moments", "动态"), ("diary", "日记"), ("status", "状态"))
 
     def __init__(self):
@@ -2272,6 +2292,12 @@ class CommPage(QWidget):
         layout.addStretch(1)
         return page
 
+    def _set_unread(self, value):
+        value = int(value or 0)
+        if value != self._unread:
+            self._unread = value
+            self.unreadChanged.emit(value)
+
     def _refresh_home(self):
         import time as _time
         self.clock.setText(_time.strftime("%H:%M"))
@@ -2313,7 +2339,7 @@ class CommPage(QWidget):
     def _poll(self):
         try:
             info = api_get("/phone")
-            self._unread = int(info.get("unread") or 0)
+            self._set_unread(info.get("unread") or 0)
         except Exception:
             return
         if self.stack.currentWidget() is self.home:
@@ -2339,7 +2365,7 @@ class CommPage(QWidget):
             info = api_get("/phone?app=chat&limit=32")
         except Exception:
             return
-        self._unread = int(info.get("unread") or 0)
+        self._set_unread(info.get("unread") or 0)
         self._clear_thread()
         for msg in info.get("messages") or []:
             text = str(msg.get("text") or msg.get("caption") or "")
@@ -2403,8 +2429,24 @@ class CommPage(QWidget):
                     pic.setPixmap(pix.scaled(420, 280, Qt.KeepAspectRatio,
                                              Qt.SmoothTransformation))
                     box.addWidget(pic)
+            like_row = QHBoxLayout()
+            like = QPushButton("♥" if msg.get("liked") else "♡")
+            like.setFixedWidth(34)
+            like.setStyleSheet("QPushButton { font-size: 17px; color: #e7c58a; }")
+            like.clicked.connect(
+                lambda checked=False, a=self._app, line=msg.get("line"): self._toggle_like(a, line))
+            like_row.addWidget(like)
+            like_row.addStretch(1)
+            box.addLayout(like_row)
             self.list_box.addWidget(card)
         self.list_box.addStretch(1)
+
+    def _toggle_like(self, app, line):
+        try:
+            api_send("POST", "/phone/like", {"app": app, "line": line})
+        except Exception:
+            return
+        self._load_list()
 
     def _load_status(self):
         try:
@@ -2590,6 +2632,10 @@ class MainWindow(QMainWindow):
             btn = NavButton(key, label)
             btn.set_active(index == 0)
             btn.clicked.connect(lambda i=index: self.switch(i))
+            if key == "comm" and isinstance(page, CommPage):
+                self.comm_page = page
+                self.comm_button = btn
+                page.unreadChanged.connect(btn.set_badge)
             nav_layout.addWidget(btn)
             self.buttons.append(btn)
             self.pages.addWidget(page)

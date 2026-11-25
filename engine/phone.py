@@ -76,6 +76,8 @@ def _mark_read(app, lines):
 def _message_rows(app, rows):
     data = _read_state()
     read = _read_set(data, app)
+    likes = set(int(x) for x in ((data.get("likes") or {}).get(app) or [])
+                if str(x).strip().isdigit())
     out = []
     for i, item in enumerate(rows, 1):
         out.append({
@@ -87,6 +89,7 @@ def _message_rows(app, rows):
             "caption": str(item.get("caption") or ""),
             "ts": str(item.get("ts") or ""),
             "read": i in read or str(item.get("from") or "") != "漾涟孑",
+            "liked": i in likes,
         })
     return out
 
@@ -240,6 +243,31 @@ def _safe_media(value):
     except (OSError, ValueError):
         return ""
     return str(p)
+
+
+def toggle_like(app="moments", line=0):
+    app = str(app or "moments").strip()
+    if app not in ("moments", "diary"):
+        return {"ok": False, "reason": "只能给动态或日记点赞"}
+    rows = _read(app)
+    try:
+        line = int(line)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "line 不正确"}
+    if line < 1 or line > len(rows):
+        return {"ok": False, "reason": "没有这一条"}
+    data = _read_state()
+    likes = data.setdefault("likes", {})
+    current = {int(x) for x in (likes.get(app) or []) if str(x).strip().isdigit()}
+    if line in current:
+        current.remove(line)
+        liked = False
+    else:
+        current.add(line)
+        liked = True
+    likes[app] = sorted(current)
+    _write_state(data)
+    return {"ok": True, "app": app, "line": line, "liked": liked}
 
 
 def ui_payload(app=DEFAULT_APP, limit=32):
