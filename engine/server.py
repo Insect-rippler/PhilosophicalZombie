@@ -1165,6 +1165,7 @@ def state_snapshot():
         "local": ch.get("local") or "",
         "active": (ch.get("state") or {}).get("active") or "wake",
         "metabolism": ch.get("metabolism") or {},
+        "emotion": ch.get("emotion") or {},
         "timers": [{"at": t.get("at"), "text": t.get("text"), "kind": t.get("kind")}
                    for t in timers.load_timers()],
         "pending": timers.peek_pending(),

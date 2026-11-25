@@ -147,8 +147,12 @@ def read_messages(app=DEFAULT_APP, line=0, around=2, mark=True):
     end = min(len(rows), line + around)
     chunk = rows[start:end]
     if mark:
-        _mark_read(app, [row["line"] for row in chunk
-                         if row.get("from") == "漾涟孑"])
+        marked = [row["line"] for row in chunk
+                  if row.get("from") == "漾涟孑"]
+        _mark_read(app, marked)
+        for row in chunk:
+            if row.get("line") in marked:
+                row["read"] = True
     return {"ok": True, "app": app, "line": line, "around": around,
             "lines": chunk, "unread": unread_count(app)}
 

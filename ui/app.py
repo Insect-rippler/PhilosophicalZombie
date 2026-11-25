@@ -2349,15 +2349,24 @@ class CommPage(QWidget):
 
     def _load_status(self):
         try:
-            info = api_get("/view")
+            info = api_get("/state")
         except Exception as error:
             self.status_label.setText(f"读取失败：{error}")
             return
-        st = info.get("state") or {}
+        metab = info.get("metabolism") or {}
+        emo = (info.get("emotion") or {}).get("emotion")
+        timers = info.get("timers") or []
+        active = "睡着" if info.get("active") == "sleep" else "醒着"
+        timer_text = "；".join(str(t.get("text") or "") for t in timers[:3]) or "无"
         self.status_label.setText(
-            f"位置：{st.get('location', '')}\n"
-            f"状态：{st.get('status', '')}\n"
-            f"身体：{st.get('metabolismText', '')}")
+            f"位置：{info.get('local') or '未知'}\n"
+            f"状态：{active}\n"
+            f"饱食：{float(metab.get('satiety', 0)):.0f}　"
+            f"水分：{float(metab.get('hydration', 0)):.0f}\n"
+            f"疲劳：{float(metab.get('fatigue', 0)):.0f}　"
+            f"困意：{float(metab.get('sleepiness', 0)):.0f}\n"
+            f"情绪：{float(emo or 0):.0f}\n"
+            f"计时器：{timer_text}")
 
     def _clear_thread(self):
         while self.thread_box.count():
