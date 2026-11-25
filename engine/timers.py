@@ -420,7 +420,7 @@ def _settle_impl(now=None, *, rng=None):
 
 # 每小时变化：运动/睡眠不同。负数是减少，正数是增加。
 RATES = {
-    "awake": {"satiety": -4.0, "hydration": -4.0, "fatigue": +0.5, "sleepiness": +0.5},
+    "awake": {"satiety": -4.0, "hydration": -4.0, "fatigue": -0.5, "sleepiness": +0.5},
     "sleep": {"satiety": -1.5, "hydration": -1.5, "fatigue": -7.0, "sleepiness": -7.0},
 }
 MAX_GAP_HOURS = 12
