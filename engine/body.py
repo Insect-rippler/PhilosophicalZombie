@@ -607,6 +607,12 @@ _JUDGE_QUEUE = queue.Queue()
 _WORKER_STARTED = False
 
 
+def _active_fatigue(effort, minutes):
+    """active 的疲劳始终由 labor intensity 决定；rest 为负。"""
+    hours = max(0.0, float(minutes or 0)) / 60.0
+    return round(hours * effort_rate(effort), 2)
+
+
 def _apply_judgement(job, verdict):
     entries = timers.load_timers()
     target = next((e for e in entries if e.get("id") == job["id"]), None)
@@ -614,7 +620,12 @@ def _apply_judgement(job, verdict):
         return
     if verdict:
         target["text"] = str(verdict.get("text") or job["description"])
-        target["reward"] = verdict.get("reward") or {}
+        reward = dict(verdict.get("reward") or {})
+        # 统计疲劳只认 active 的劳动强度和实际时长，避免模型直接给一个数。
+        reward.pop("fatigue", None)
+        reward["fatigue"] = _active_fatigue(
+            verdict.get("effort"), target.get("minutes") or verdict.get("duration"))
+        target["reward"] = reward
         if job.get("location"):
             target["location"] = job.get("location")
     else:
