@@ -264,7 +264,7 @@ def _body_thinking():
 SLOT_CAP = {"short": 5.3, "long": 187.0, "event": 463.0}   # 分钟
 
 
-EFFORT_RATE = {"轻": 3.0, "中": 6.5, "重": 15.0}   # 每小时疲惫
+EFFORT_RATE = {"rest": -4.0, "轻": 3.0, "中": 6.5, "重": 15.0}   # 每小时疲惫；rest 为恢复
 EFFORT_DEFAULT = 6.5
 
 
@@ -449,10 +449,15 @@ def judge(description, ch=None, force=False, declared_slot="", location=""):
     rule, judge_rules = load_realm()
     system = (f"{rule}\n\n# 判定标准\n\n{judge_rules}\n\n"
 
-              "输出 JSON：{\"duration\":分钟参考值, \"effort\":\"轻|中|重\", "
+              "输出 JSON：{\"duration\":分钟参考值, \"effort\":\"rest|轻|中|重\", "
               "\"state_read\":\"照抄你看到的当前地点与正在做的事\", "
               "\"basis\":\"这个时长是怎么来的，一句话\", "
-              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"text\":\"到点后的状态，和 state 的时间、地点一致，不写下一步\"}")
+              "\"reward\":{\"satiety\":0,\"emotion\":0}, \"text\":\"到点后的状态，和 state 的时间、地点一致，不写下一步\"}\n\n"
+              "effort 说明：\n"
+              "- rest：打盹、躺着、靠着、坐着等、窝着、歇着；这是恢复，按时间减少疲劳。\n"
+              "- 轻：散步、收拾、看东西等轻活动。\n"
+              "- 中：走路、搬轻物、持续做事。\n"
+              "- 重：跑、搬重物、剧烈活动。")
     user = (
         f"## 当前状态\n\n{state_snapshot(ch)}\n\n"
         f"{ability_lines()}\n\n"
