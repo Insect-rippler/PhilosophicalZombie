@@ -102,6 +102,22 @@ def _open_event():
     return None
 
 
+def _persona_context(limit=4500):
+    """事件生成时也读人格卡，避免只生成“社区好人好事”。"""
+    parts = []
+    for name in ("PERSONA.md", "CHARACTER.md"):
+        try:
+            text = _paths.realm(name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if text.startswith("---"):
+            pieces = text.split("---", 2)
+            if len(pieces) >= 3:
+                text = pieces[2]
+        parts.append(text.strip())
+    return "\n\n".join(parts)[:limit]
+
+
 def _context():
     import body
     import environment
@@ -125,6 +141,7 @@ def _context():
     return {
         "state": state,
         "recent": recent,
+        "persona": _persona_context(),
         "local": local,
         "risk": risk,
         "weather": env.get("condition"),
@@ -142,17 +159,24 @@ def _generate():
     weather = f"{ctx['weather']}，{ctx['temperature']}°C，{ctx['season']}"
     system = (
         "你是世界事件生成器。根据角色当前状态、最近经历、地点、天气与风险，"
-        "生成一个会打断她日常的事件。\n"
+        "生成一个会打断她日常的局势。\n"
+        "事件不是任务，也不是道德测试。她是混沌恶：破坏是娱乐，规则先看见再决定理不理；"
+        "事件必须给她留出可帮、可抢、可拆、可利用、可看热闹、可走开中的至少两条路，"
+        "其中至少一条不是帮忙或救助。\n"
         "只输出 JSON：{\"title\":\"一句标题\", \"scene\":\"场景描述\", "
-        "\"opening\":\"她遭遇时看到/听到的第一幕\", \"condition\":\"完成条件\", "
+        "\"opening\":\"她遭遇时看到/听到的第一幕\", "
+        "\"condition\":\"她可以怎么插手/利用/破坏/旁观/走开；至少两条路，不要求行善\", "
         "\"limitSeconds\":900~86400, "
         "\"reward\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0,\"items\":[\"剧情物品\"]}, "
         "\"penalty\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0}}。\n"
-        "奖励惩罚只用变化量；不要写数值上限、不要写下一步指令；事件必须现在就能发生。\n"
+        "奖励惩罚只写插手后的后果，是身体、情绪或物品的变化，不按道德善恶发放；"
+        "不要写数值上限、不要写下一步指令；事件必须现在就能发生。\n"
         "最近 24 小时已经出现过的事件，绝对不要复用其触发方式、核心意象、道具或解决方式；"
-        "不要只换地点、换措辞。必须换一种完全不同的触发和冲突。"
+        "不要只换地点、换措辞；也不要连续生成帮忙、救助、归还失物型事件。"
+        "必须换一种完全不同的触发、冲突和道德方向。"
     )
     user = (
+        f"## 她是谁\n{ctx['persona'] or '（缺人格卡）'}\n\n"
         f"## 当前状态\n{ctx['state']}\n\n"
         f"## 最近言行\n{ctx['recent'] or '（无）'}\n\n"
         f"## 地点与风险\n{ctx['local']}（风险 {ctx['risk']}）\n\n"
@@ -175,12 +199,27 @@ def _generate():
     return _parse_json(content)
 
 
+CHAOS_MARKERS = ("抢", "拆", "拿", "利用", "看热闹", "旁观", "走开", "不管", "占", "试", "玩", "藏", "骗")
+HELP_ONLY = ("帮忙", "帮助", "救助", "救援", "救人", "扶", "送回", "归还", "提醒", "捡", "照顾", "保护", "报警")
+
+
+def _condition_open(condition):
+    """拦住只有“帮助/救助/归还”的单一任务；事件要留出别的方向。"""
+    if any(marker in condition for marker in CHAOS_MARKERS):
+        return True
+    if any(word in condition for word in HELP_ONLY):
+        return False
+    return True
+
+
 def _build_goal(data):
     title = str(data.get("title") or "").strip()[:60]
     scene = str(data.get("scene") or "").strip()[:300]
     opening = str(data.get("opening") or "").strip()[:300]
     condition = str(data.get("condition") or "").strip()[:200]
     if not title or not condition:
+        return None
+    if not _condition_open(condition):
         return None
     try:
         limit = int(data.get("limitSeconds") or 0)
@@ -234,13 +273,17 @@ def maybe_trigger(now=None):
         return False
     marks["lastEventAt"] = now
     _write(STATE, marks)
-    data = _generate()
-    if not isinstance(data, dict):
-        runlog.log("event.failed", reason="没有可解析的事件 JSON")
-        return False
-    goal = _build_goal(data)
+    goal = None
+    for attempt in range(2):
+        data = _generate()
+        if not isinstance(data, dict):
+            runlog.log("event.failed", reason="没有可解析的事件 JSON")
+            continue
+        goal = _build_goal(data)
+        if goal is not None:
+            break
+        runlog.log("event.failed", reason="事件字段不全或只有单一助人条件")
     if goal is None:
-        runlog.log("event.failed", reason="事件字段不全")
         return False
     _append_goal(goal)
     runlog.log("event.created", id=goal["id"], title=goal["objective"],
