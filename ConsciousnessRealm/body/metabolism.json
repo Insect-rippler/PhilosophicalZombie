@@ -172,6 +172,12 @@
       }
     ]
   },
+  "sleep": {
+    "restTo": 10.0,
+    "ramp": 0.85,
+    "wakeChance": 0.08,
+    "recoveryPerHour": 7.0
+  },
   "continuous": {
     "healthToFatigue": 0.8,
     "fatigueToSleepiness": 0.8

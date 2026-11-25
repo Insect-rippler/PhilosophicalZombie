@@ -457,12 +457,39 @@ SLEEP_FORCE_CHANCE = 0.01      # 困到极限后每 tick 昏迷的概率
 SLEEP_WAKE_CHANCE = 0.08
 SLEEP_REST_TO = 10.0             # 困意掉到这个值，算睡透
 SLEEP_RAMP = 0.85                # 睡到预期时长的这个比例，才开始掷骰子       # 睡够之后每 tick 醒来的概率
-SLEEP_FORCE_AT = 90            # 困意进入 [90,100] 段才可能昏迷
+SLEEP_FORCE_AT = 90            # 数据表缺失时的兜底：头昏眼花段起点
 SLEEPY_BAND = 60               # 进入犯困段
-WAKE_BAND = 30                 # 醒来段：困意低于此值才计算苏醒概率
-SLEEP_WAKE_BELOW = 20          # 困意降到这个值以下才可能醒
+SLEEP_WAKE_BELOW = 20          # 数据表缺失时的兜底：清醒段上界
 COLLAPSE_FATIGUE = 170         # 疲劳到这个值会累垮
 COLLAPSE_HEALTH = 20           # 健康掉到这个值会倒下
+
+
+def sleep_wake_band():
+    """醒来阈值跟随 metabolism.json 的「清醒」段上界，不写死。"""
+    return band_end("sleepiness", "清醒", SLEEP_WAKE_BELOW)
+
+
+def sleep_config():
+    """睡眠参数从 metabolism.json 的 sleep 段读取，代码只留兜底。"""
+    raw = (harness_metabolism() or {}).get("sleep") or {}
+    try:
+        rest_to = float(raw.get("restTo", SLEEP_REST_TO))
+    except (TypeError, ValueError):
+        rest_to = SLEEP_REST_TO
+    try:
+        ramp = float(raw.get("ramp", SLEEP_RAMP))
+    except (TypeError, ValueError):
+        ramp = SLEEP_RAMP
+    try:
+        chance = float(raw.get("wakeChance", SLEEP_WAKE_CHANCE))
+    except (TypeError, ValueError):
+        chance = SLEEP_WAKE_CHANCE
+    try:
+        recovery = float(raw.get("recoveryPerHour", 7.0))
+    except (TypeError, ValueError):
+        recovery = 7.0
+    return {"restTo": rest_to, "ramp": ramp,
+            "wakeChance": chance, "recoveryPerHour": max(1.0, recovery)}
 
 
 def _sleep_window(now):
@@ -586,6 +613,10 @@ def advance(now=None):
     coupling = coupling_multipliers(metab)
     sleeping = (ch.get("state") or {}).get("active") == "sleep"
     rates = dict(RATES["sleep" if sleeping else "awake"])   # 昼夜差异由 sleepiness_base 承担
+    if sleeping:
+        _sleep_cfg = sleep_config()
+        rates["fatigue"] = -_sleep_cfg["recoveryPerHour"]
+        rates["sleepiness"] = -_sleep_cfg["recoveryPerHour"]
     # 睡得越累恢复越快：疲惫 60 时 -9/h，100 时 -11/h，200 时 -16/h
     if sleeping:
         rates["fatigue"] = -(6.0 + float(metab.get("fatigue", 0)) / 20.0)
@@ -662,7 +693,8 @@ def advance(now=None):
     force_at = band_start("sleepiness", "头昏眼花", SLEEP_FORCE_AT)
     collapse_at = band_start("fatigue", "撑不住", COLLAPSE_FATIGUE)
     health_at = band_end("health", "很差", COLLAPSE_HEALTH)
-    wake_band = SLEEP_WAKE_BELOW                # 醒来阈值：睡到几乎不困才算睡够
+    wake_band = sleep_wake_band()                # 醒来阈值跟随数据表「清醒」段
+    sleep_cfg = sleep_config()
 
     collapse = None
     if sleepiness_now >= force_at:
@@ -688,13 +720,13 @@ def advance(now=None):
         # 预期睡多久：入睡时的困意掉到「睡透」所需的时间（按 -7/h）
         start_s = float(state.get("sleepStartSleepiness") or sleepiness_now)
         health_now = float(metab.get("health", 100))
-        expect_h = max(0.5, (start_s - SLEEP_REST_TO) / 7.0) * (1.0 + (100.0 - health_now) / 200.0)
+        expect_h = max(0.5, (start_s - sleep_cfg["restTo"]) / sleep_cfg["recoveryPerHour"]) * (1.0 + (100.0 - health_now) / 200.0)
         ratio = slept_h / expect_h
-        damp = 0.0 if ratio <= SLEEP_RAMP else min(1.0, (ratio - SLEEP_RAMP) / (1.0 - SLEEP_RAMP))
+        damp = 0.0 if ratio <= sleep_cfg["ramp"] else min(1.0, (ratio - sleep_cfg["ramp"]) / (1.0 - sleep_cfg["ramp"]))
         effects = stage_effects(ch)
         need = max(0.0, -(effects.get("satiety", 0) + effects.get("hydration", 0)
                           + effects.get("fatigue", 0)))
-        wake_p = SLEEP_WAKE_CHANCE * (1.0 + rest) * damp * (1.0 + 0.15 * need)
+        wake_p = sleep_cfg["wakeChance"] * (1.0 + rest) * damp * (1.0 + 0.15 * need)
 
         if (sleepiness_now <= wake_band or slept_h >= expect_h) and random.random() < wake_p:
             log("sleep.wake", sleepiness=sleepiness_now, slept=round(slept_h, 2))
