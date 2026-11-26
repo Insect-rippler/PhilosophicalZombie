@@ -9,9 +9,11 @@ state/Philosophical.json
 .env
 
 # ============ 角色内容：提示词与角色卡入库，运行产物不入库 ============
-ConsciousnessRealm/plan/
-# 记忆数据与向量（产物 / 派生）
-ConsciousnessRealm/embedding/
+# 计划与记忆是运行产物，只把同名的结构示例（*.md）放回仓库
+ConsciousnessRealm/plan/*
+!ConsciousnessRealm/plan/*.md
+ConsciousnessRealm/embedding/*
+!ConsciousnessRealm/embedding/*.md
 # 世界书检索产物（原料见 ConsciousnessRealm/LOREBOOK.md）
 ConsciousnessRealm/lorebook/lorebook.json
 
@@ -27,16 +29,29 @@ engine/chat_completions.py
 vivarium/
 
 # ============ 处理产物 / 原料 ============
+# 运行目录整体不入库，只把与运行文件同名的结构示例（*.md）放回仓库
+state/realTime/*
+!state/realTime/*.md
+state/session/*
+!state/session/*.md
+state/phone/*
+!state/phone/*.md
+state/world/*
+!state/world/*.md
 state/backup/
-lab/anchors/vectors.npz
-state/backlog.md
 state/dream/
 state/media/
-state/session/
 state/tmp/
 state/usage/
+state/file/
+state/_baseline/
+state/backlog.md
+lab/anchors/vectors.npz
 *.jsonl
 *.npz
+
+# 启动脚本的控制台日志
+state/logs/server-console*
 
 # ============ Python ============
 __pycache__/
@@ -52,10 +67,18 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
-state/file/
-state/realTime/
 
+# 本机启动脚本（各自机器上的入口，不入库）
+start.ps1
+stop.ps1
+启动.bat
+停止.bat
+
+# ============ 本机产物：不入库 ============
+# 分析脚本、会话摘录、界面截图
+.analysis/
 # 美术素材（版权归原作，不进公开仓库）
+art/
 ui/assets/
 
 # 模拟器数据目录（测试产物）

@@ -20,15 +20,28 @@
 
 ## 运行
 
+先配置一次：按 `state/Philosophical.example.md` 里的结构，新建 `state/Philosophical.json`，填入 `payload.api`。
+
+之后双击即可，不依赖终端（脚本只在本机，不入库）：
+
+```text
+启动.bat     后端 + 桌面界面；关掉界面时，本次启动的后端一起停
+停止.bat     停掉仍在后台跑的后端
+```
+
+终端里等价：
+
 ```powershell
-# 1. 配置
-copy state\Philosophical.example.json state\Philosophical.json
-# 填入 payload.api
+.\start.ps1              # 后端 + 界面
+.\start.ps1 -NoUI        # 只启动后端（前台，Ctrl+C 停止）
+.\start.ps1 -Check       # 只检查 Python / 配置 / 端口
+.\stop.ps1               # 只停后端
+```
 
-# 2. 后端
+不经过脚本时就是原始命令：
+
+```powershell
 python engine\server.py
-
-# 3. 桌面界面
 python ui\app.py
 ```
 
@@ -355,7 +368,7 @@ maintain  跑一次维护
 完整字段看：
 
 ```text
-state/Philosophical.example.json
+state/Philosophical.example.md
 state/README.md
 ```
 

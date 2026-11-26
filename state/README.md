@@ -6,8 +6,11 @@
 
 ```text
 state/README.md
-state/Philosophical.example.json
+state/Philosophical.example.md
 ```
+
+每个运行文件旁边有一份同名的 `.md`（如 `character.json` → `character.md`），写它的结构和字段；
+运行文件本身和里面的数据都不入库。
 
 `Philosophical.json`、session、媒体、日志、备份、手机消息都由本机生成。
 
@@ -16,11 +19,11 @@ state/Philosophical.example.json
 | 路径 | 内容 |
 |---|---|
 | `Philosophical.json` | 本机运行配置，含 API key，**不入库** |
-| `Philosophical.example.json` | 配置模板 |
-| `realTime/` | `character.json`、`timers.json`、`pending.json`、`environment.json`、`maintenance.json` |
-| `session/` | `session.jsonl` 与 `history/YYYY-MM.jsonl` 归档 |
-| `phone/` | 手机聊天、动态、日记、媒体与未读状态 |
-| `world/` | 运行时地图 `map.json` |
+| `Philosophical.example.md` | 配置结构示例 |
+| `realTime/` | `character.json`、`timers.json`、`pending.json`、`environment.json`、`maintenance.json`，各带同名 `.md` |
+| `session/` | `session.jsonl` 与 `history/YYYY-MM.jsonl` 归档，结构见 `session.md` |
+| `phone/` | 手机聊天、动态、日记、媒体与未读状态，结构见同名 `.md` |
+| `world/` | 运行时地图 `map.json`，结构见 `map.md` |
 | `media/` | 外观图、音频、参考音色等媒体产物 |
 | `usage/` | 用量记录 |
 | `logs/` | `YYYY-MM-DD.jsonl` 运行日志 |
@@ -30,11 +33,7 @@ state/Philosophical.example.json
 
 ## 配置
 
-复制：
-
-```powershell
-copy state\Philosophical.example.json state\Philosophical.json
-```
+按 `Philosophical.example.md` 里的结构新建 `state/Philosophical.json`。
 
 至少填：
 
