@@ -17,6 +17,23 @@ APPS = {"chat": "消息", "moments": "动态", "diary": "日记"}
 DEFAULT_APP = "chat"
 
 
+def identity():
+    """手机里的两个名字从配置和角色卡读取，换卡不用改代码。"""
+    user = "用户"
+    self_name = "她"
+    try:
+        cfg = json.loads(_paths.data("Philosophical.json").read_text(encoding="utf-8"))
+        user = str((cfg.get("payload") or {}).get("user_id") or user).strip() or user
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        ch = json.loads(_paths.data("realTime", "character.json").read_text(encoding="utf-8"))
+        self_name = str(ch.get("name") or self_name).strip() or self_name
+    except (OSError, json.JSONDecodeError):
+        pass
+    return user, self_name
+
+
 def _path(app):
     app = str(app or DEFAULT_APP).strip()
     if app not in APPS:
@@ -76,40 +93,43 @@ def _mark_read(app, lines):
 def _message_rows(app, rows):
     data = _read_state()
     read = _read_set(data, app)
+    user_name, self_name = identity()
     likes = set(int(x) for x in ((data.get("likes") or {}).get(app) or [])
                 if str(x).strip().isdigit())
     out = []
     for i, item in enumerate(rows, 1):
+        sender = str(item.get("sender") or "").strip()
+        if sender not in ("user", "self"):
+            sender = "self" if str(item.get("from") or "") == self_name else "user"
         out.append({
             "line": i,
+            "sender": sender,
             "from": str(item.get("from") or ""),
             "kind": str(item.get("kind") or "text"),
             "text": str(item.get("text") or ""),
             "media": str(item.get("media") or ""),
             "caption": str(item.get("caption") or ""),
             "ts": str(item.get("ts") or ""),
-            "read": i in read or str(item.get("from") or "") != "漾涟孑",
+            "read": i in read or sender != "user",
             "liked": i in likes,
         })
     return out
 
 
 def unread_count(app=DEFAULT_APP):
-    rows = _read(app)
     if app != "chat":
         return 0
-    read = _read_set(_read_state(), app)
-    return sum(1 for i, item in enumerate(rows, 1)
-               if str(item.get("from") or "") == "漾涟孑" and i not in read)
+    rows = _message_rows(app, _read(app))
+    return sum(1 for row in rows if row.get("sender") == "user" and not row.get("read"))
 
 
 def user_unread_count(app=DEFAULT_APP):
-    """给界面看的未读：只算陆青禾发出、用户还没点开的消息。"""
+    """给界面看的未读：只算角色发出、用户还没点开的消息。"""
     rows = _message_rows(app, _read(app))
     data = _read_state()
     last = int((data.get("ui_read") or {}).get(app) or 0)
     return sum(1 for row in rows
-               if row.get("from") == "陆青禾" and row.get("line") > last)
+               if row.get("sender") == "self" and row.get("line") > last)
 
 
 def mark_user_read(app=DEFAULT_APP):
@@ -169,7 +189,7 @@ def read_messages(app=DEFAULT_APP, line=0, around=2, mark=True):
     chunk = rows[start:end]
     if mark:
         marked = [row["line"] for row in chunk
-                  if row.get("from") == "漾涟孑"]
+                  if row.get("sender") == "user"]
         _mark_read(app, marked)
         for row in chunk:
             if row.get("line") in marked:
@@ -183,8 +203,10 @@ def append_incoming(text="", kind="text", media="", caption=""):
     caption = str(caption or "").strip()
     if not text and not media:
         return {"ok": False, "reason": "消息需要 text 或 media"}
+    user_name, _ = identity()
     row = {
-        "from": "漾涟孑",
+        "sender": "user",
+        "from": user_name,
         "kind": str(kind or "text"),
         "text": text,
         "media": str(media or ""),
@@ -204,8 +226,10 @@ def send(text="", kind="text", media="", caption=""):
     safe_media = _safe_media(media)
     if media and not safe_media:
         return {"ok": False, "reason": "media 只能使用手机媒体库里的素材"}
+    user_name, self_name = identity()
     row = {
-        "from": "陆青禾",
+        "sender": "self",
+        "from": self_name,
         "kind": str(kind or "text"),
         "text": text,
         "media": safe_media,
@@ -213,7 +237,7 @@ def send(text="", kind="text", media="", caption=""):
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     fsio.append_line(_path("chat"), json.dumps(row, ensure_ascii=False))
-    return {"ok": True, "app": "chat", "to": "漾涟孑",
+    return {"ok": True, "app": "chat", "to": user_name,
             "line": len(_read("chat"))}
 
 
@@ -227,8 +251,10 @@ def publish(app="moments", text="", media="", caption="", kind="text"):
     safe_media = _safe_media(media)
     if media and not safe_media:
         return {"ok": False, "reason": "media 只能使用手机媒体库里的素材"}
+    _, self_name = identity()
     row = {
-        "from": "陆青禾",
+        "sender": "self",
+        "from": self_name,
         "kind": str(kind or (kind_or_text(media) if media else "text")),
         "text": text,
         "media": safe_media,
@@ -296,4 +322,5 @@ def ui_payload(app=DEFAULT_APP, limit=32):
     payload["app"] = app
     payload["messages"] = list_messages(app, limit)["lines"]
     payload["userUnread"] = user_unread_count(app)
+    payload["userName"], payload["selfName"] = identity()
     return payload

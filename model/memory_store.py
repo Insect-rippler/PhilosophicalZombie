@@ -14,7 +14,7 @@
   写法约定：**text 自带人名**，别把人物和描述拆开。
   ✅「伊奥莱塔·罗素，一位大骑士长，也是我的养母。她把我养大……」
   ❌「大骑士长，我的养母。她把我养大……」（开头没有名字，读者不知道在说谁）
-  `tag` 标记这条描述的主体（如"奥比娜"），同一主体可以有多条块，tag 相同的归为一组。
+  `tag` 标记这条描述的主体（如"某个角色"），同一主体可以有多条块，tag 相同的归为一组。
 - **常驻记忆**（MEMORY.md）：整段注入，不检索。
 - **人格**（PERSONA.md）：从常驻记忆里提炼，最顶层。
 
@@ -45,7 +45,7 @@
     python memory_store.py sync              # 全量对账
     python memory_store.py sync mem-000012   # 只重算这一条
     python memory_store.py add "新切片" --kind slice
-    python memory_store.py add "奥比娜，奥格尼斯科的铁匠……" --kind block --tag "奥比娜"
+    python memory_store.py add "某个角色，某个地方的人……" --kind block --tag "某个角色"
     python memory_store.py hits              # 命中次数
     python memory_store.py info
 """

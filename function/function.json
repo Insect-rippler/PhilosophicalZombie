@@ -555,7 +555,7 @@
                     },
                     "tag": {
                         "type": "string",
-                        "description": "涉及的人或事物，用于归类，例如「奥比娜」「玛嘉烈」。可省略。"
+                        "description": "涉及的人或事物，用于归类，例如「某个角色」「某件物品」。可省略。"
                     }
                 },
                 "required": [
@@ -740,7 +740,7 @@
         "type": "function",
         "function": {
             "name": "phone",
-            "description": "本机手机：查看漾涟孑发来的消息、查看动态/日记、发送文字/图片/语音、发布动态或日记。默认 wake=false，不触发下一拍；读取类操作要带 wake=true 才能看到结果。手机内容不进入主会话界面。",
+            "description": "本机手机：查看用户发来的消息、查看动态/日记、发送文字/图片、发布动态或日记。默认 wake=false，不触发下一拍；读取类操作要带 wake=true 才能看到结果。手机内容不进入主会话界面。",
             "parameters": {
                 "type": "object",
                 "properties": {

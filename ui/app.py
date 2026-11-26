@@ -2163,6 +2163,8 @@ class CommPage(QWidget):
         super().__init__()
         self._app = "chat"
         self._unread = 0
+        self._self_name = "她"
+        self._user_name = "用户"
         self._buttons = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 18, 28, 14)
@@ -2239,7 +2241,7 @@ class CommPage(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.chat_head = QLabel("漾涟孑")
+        self.chat_head = QLabel("联系人")
         self.chat_head.setObjectName("group")
         layout.addWidget(self.chat_head)
         scroll = QScrollArea()
@@ -2355,8 +2357,9 @@ class CommPage(QWidget):
         elif self.stack.currentWidget() is self.status_page:
             self._load_status()
 
-    def _avatar(self, who):
-        label = QLabel("漾" if who != "陆青禾" else "陆")
+    def _avatar(self, sender):
+        name = self._self_name if sender == "self" else self._user_name
+        label = QLabel((name or "她")[:1])
         label.setFixedSize(28, 28)
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet(
@@ -2370,12 +2373,15 @@ class CommPage(QWidget):
         except Exception:
             return
         self._set_unread(info.get("userUnread") or 0)
+        self._self_name = str(info.get("selfName") or "她")
+        self._user_name = str(info.get("userName") or "用户")
+        self.chat_head.setText(self._user_name)
         self._clear_thread()
         for msg in info.get("messages") or []:
             text = str(msg.get("text") or msg.get("caption") or "")
             kind = str(msg.get("kind") or "text")
             media = str(msg.get("media") or "")
-            who = str(msg.get("from") or "")
+            sender = str(msg.get("sender") or "user")
             if kind == "image" and not text:
                 text = "[图片]"
             elif kind == "voice" and not text:
@@ -2393,8 +2399,8 @@ class CommPage(QWidget):
                 "QLabel { background: rgba(242,232,213,0.08); border: 1px solid "
                 "rgba(242,232,213,0.18); border-radius: 8px; padding: 7px 10px; }")
             row = QHBoxLayout()
-            avatar = self._avatar(who)
-            if who == "陆青禾":
+            avatar = self._avatar(sender)
+            if sender == "self":
                 row.addStretch(1)
                 row.addWidget(bubble)
                 row.addWidget(avatar)

@@ -118,6 +118,19 @@ def _persona_context(limit=4500):
     return "\n\n".join(parts)[:limit]
 
 
+def _world_context(limit=2500):
+    """世界设定也读外部文档，不把某个世界观写进事件代码。"""
+    try:
+        text = _paths.realm("LOREBOOK.md").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if text.startswith("---"):
+        pieces = text.split("---", 2)
+        if len(pieces) >= 3:
+            text = pieces[2]
+    return text.strip()[:limit]
+
+
 def _context():
     import body
     import environment
@@ -142,6 +155,7 @@ def _context():
         "state": state,
         "recent": recent,
         "persona": _persona_context(),
+        "world": _world_context(),
         "local": local,
         "risk": risk,
         "weather": env.get("condition"),
@@ -160,23 +174,23 @@ def _generate():
     system = (
         "你是世界事件生成器。根据角色当前状态、最近经历、地点、天气与风险，"
         "生成一个会打断她日常的局势。\n"
-        "事件不是任务，也不是道德测试。她是混沌恶：破坏是娱乐，规则先看见再决定理不理；"
-        "事件必须给她留出可帮、可抢、可拆、可利用、可看热闹、可走开中的至少两条路，"
-        "其中至少一条不是帮忙或救助。\n"
+        "事件不是任务，也不是道德测试。事件要按 `## 她是谁` 和 `## 世界设定` 里的人格、欲望、底线与世界规则，"
+        "给她至少两种不同的处理方向，其中至少一条不是顺从、帮助或修复。\n"
         "只输出 JSON：{\"title\":\"一句标题\", \"scene\":\"场景描述\", "
         "\"opening\":\"她遭遇时看到/听到的第一幕\", "
-        "\"condition\":\"她可以怎么插手/利用/破坏/旁观/走开；至少两条路，不要求行善\", "
+        "\"condition\":\"至少两种处理方向；可以顺从、帮助、修复，也可以拒绝、拿走、拆开、旁观或走开\", "
         "\"limitSeconds\":900~86400, "
         "\"reward\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0,\"items\":[\"剧情物品\"]}, "
         "\"penalty\":{\"metabolism\":{\"fatigue\":0},\"emotion\":0}}。\n"
         "奖励惩罚只写插手后的后果，是身体、情绪或物品的变化，不按道德善恶发放；"
         "不要写数值上限、不要写下一步指令；事件必须现在就能发生。\n"
         "最近 24 小时已经出现过的事件，绝对不要复用其触发方式、核心意象、道具或解决方式；"
-        "不要只换地点、换措辞；也不要连续生成帮忙、救助、归还失物型事件。"
-        "必须换一种完全不同的触发、冲突和道德方向。"
+        "不要只换地点、换措辞；也不要连续生成同一种解决方向。"
+        "必须换一种完全不同的触发、冲突和选择方向。"
     )
     user = (
         f"## 她是谁\n{ctx['persona'] or '（缺人格卡）'}\n\n"
+        f"## 世界设定\n{ctx['world'] or '（缺世界观文档）'}\n\n"
         f"## 当前状态\n{ctx['state']}\n\n"
         f"## 最近言行\n{ctx['recent'] or '（无）'}\n\n"
         f"## 地点与风险\n{ctx['local']}（风险 {ctx['risk']}）\n\n"
@@ -199,17 +213,12 @@ def _generate():
     return _parse_json(content)
 
 
-CHAOS_MARKERS = ("抢", "拆", "拿", "利用", "看热闹", "旁观", "走开", "不管", "占", "试", "玩", "藏", "骗")
-HELP_ONLY = ("帮忙", "帮助", "救助", "救援", "救人", "扶", "送回", "归还", "提醒", "捡", "照顾", "保护", "报警")
+OPEN_MARKERS = ("可以", "也可以", "或者", "或", "/")
 
 
 def _condition_open(condition):
-    """拦住只有“帮助/救助/归还”的单一任务；事件要留出别的方向。"""
-    if any(marker in condition for marker in CHAOS_MARKERS):
-        return True
-    if any(word in condition for word in HELP_ONLY):
-        return False
-    return True
+    """事件条件必须留下至少一种替代做法，不能写成单一路径。"""
+    return any(marker in condition for marker in OPEN_MARKERS)
 
 
 def _build_goal(data):
@@ -282,7 +291,7 @@ def maybe_trigger(now=None):
         goal = _build_goal(data)
         if goal is not None:
             break
-        runlog.log("event.failed", reason="事件字段不全或只有单一助人条件")
+        runlog.log("event.failed", reason="事件字段不全或没有多方向条件")
     if goal is None:
         return False
     _append_goal(goal)
