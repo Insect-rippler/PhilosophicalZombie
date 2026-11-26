@@ -962,11 +962,7 @@ def render_state(ch=None, pending="", now=None, full=False):
     ch = ch if isinstance(ch, dict) else load_character()
     lines = [f"当前时间：{clock_text(now)}。"]
     if (ch.get("state") or {}).get("active") == "sleep":
-        alarm = [e for e in load_timers() if e.get("alarm")]
-        when = ""
-        if alarm:
-            when = "，闹钟定在 " + time.strftime("%H:%M:%S", time.localtime(float(alarm[0]["at"])))
-        lines.append(f"角色正在睡眠{when}。她已经躺下了，不必再递交睡下的动作；醒来自会由生理或闹钟触发。")
+        lines.append("角色正在睡眠。她已经躺下了，不必再递交睡下的动作；醒来自会由生理或闹钟触发。")
 
     moment = time.time() if now is None else float(now)
     last_action = ch.get("state", {}).get("lastActionAt")
@@ -1050,6 +1046,16 @@ def render_state(ch=None, pending="", now=None, full=False):
             lines.append(f"[{name}] 正在做：{doing}（已过 {_hms(elapsed)} / 共 {_hms(total)}，进度 {pct}%{goal}）")
         else:
             lines.append(f"[{name}] 正在做：{doing}（还剩 {left}{goal}）")
+
+    alarms = [e for e in load_timers()
+              if e.get("alarm") and float(e.get("at") or 0) > moment]
+    for entry in alarms:
+        at = float(entry["at"])
+        left = _hms(max(0.0, at - moment))
+        note = str(entry.get("note") or entry.get("text") or "").strip().rstrip("。！？!?；; ")
+        suffix = f" — {note}" if note else ""
+        line = f"闹钟：{time.strftime('%H:%M:%S', time.localtime(at))}（还剩 {left}）{suffix}"
+        lines.append(line + "。")
 
     if ch.get("state", {}).get("groggy"):
         lines.append("角色刚睡醒，没睡透（生理原因）：动作会慢半拍，说话也短。")
