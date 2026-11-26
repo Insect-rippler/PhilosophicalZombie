@@ -192,8 +192,7 @@ def run_with_tools(payload, emit, stream_id=None):
     for _round in range(rounds):
         active_seen = False
         active_background = False
-        line_final = False
-        line_default = False
+        line_wake = False
         other_wake = False                   # 每条 message 重新计数，不是每轮 loop 累计
         strategy = "sleep" if sleeping() else "active"
         if _round == rounds - 1:              # 最后一轮关思考，免得只吐 reasoning
@@ -407,15 +406,13 @@ def run_with_tools(payload, emit, stream_id=None):
                 except json.JSONDecodeError:
                     la = {}
                 said2 = str(la.get("text") or "").strip()
+                line_wakes = bool(la.get("wake") is True
+                                  or str(la.get("wake")).lower() in ("true", "1", "yes"))
                 if said2:
                     spoken_line = (spoken_line + said2) if spoken_line else said2
                     emit("tool", {"kind": "line", "name": "line", "text": said2})
-                    if la.get("final") is True or str(la.get("final")).lower() in ("true", "1"):
-                        line_final = True
-                    elif strategy != "sleep":
-                        line_default = True
-                elif strategy != "sleep":
-                    line_default = True
+                    if line_wakes and strategy != "sleep":
+                        line_wake = True
             if name == "active":
                 if not tool_failed(output):
                     try:
@@ -430,25 +427,18 @@ def run_with_tools(payload, emit, stream_id=None):
                 else:
                     other_wake = True
             if name not in ("active", "line", "pause", "sleep"):
-                alarm_final = False
-                phone_wake = False
-                if name == "alarm":
+                tool_wake = False
+                if name in ("alarm", "phone"):
                     try:
-                        alarm_final = bool(json.loads(args).get("final"))
+                        aa = json.loads(args)
+                        tool_wake = bool(aa.get("wake") is True
+                                         or str(aa.get("wake")).lower() in ("true", "1", "yes"))
                     except (json.JSONDecodeError, TypeError, AttributeError):
-                        alarm_final = False
-                elif name == "phone":
-                    try:
-                        pa = json.loads(args)
-                        phone_wake = bool(pa.get("wake") is True
-                                          or str(pa.get("wake")).lower() in ("true", "1", "yes"))
-                    except (json.JSONDecodeError, TypeError, AttributeError):
-                        phone_wake = False
-                if name == "phone":
-                    if phone_wake and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
+                        tool_wake = False
+                if name in ("alarm", "phone"):
+                    if tool_wake and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
                         other_wake = True
-                elif (not alarm_final
-                      and not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS)):
+                elif not (strategy == "sleep" and name in tools.VIRTUAL_HANDLERS):
                     other_wake = True
             record_tool({"role": "tool", "tool_call_id": call.get("id", ""),
                             "content": output})
@@ -475,10 +465,10 @@ def run_with_tools(payload, emit, stream_id=None):
             }]
             continue
         # 每个工具各自决定“这一拍之后还要不要下一次唤醒”：
-        # active(short)=否，line(final)=否，pause=否；其它工具=是。
+        # active(short)=否，line=否，pause=否；alarm/phone 默认否，wake=true 才继续。
         # 这些标记按 OR 合并：只要有一个工具要下一次唤醒，就继续；
         # 全部都不需要，才结束本轮。
-        if not (line_default or other_wake):
+        if not (line_wake or other_wake):
             break
         payload = core.context_assemble(record=False)     # 工具轮不重复记召回
         body = dict(payload)

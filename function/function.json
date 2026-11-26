@@ -644,7 +644,7 @@
         "type": "function",
         "function": {
             "name": "alarm",
-            "description": "设一个独立闹钟：到点提醒她，睡着就叫醒，醒着就提一句。和睡不睡无关；只保留一个，新的覆盖旧的。final=true 时设完不唤醒。",
+            "description": "设一个独立闹钟：到点提醒她，睡着就叫醒，醒着就提一句。和睡不睡无关；只保留一个，新的覆盖旧的。默认设完不唤醒，wake=true 时继续下一拍。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -656,9 +656,9 @@
                         "type": "string",
                         "description": "可选，到点时显示给自己看的一句话。"
                     },
-                    "final": {
+                    "wake": {
                         "type": "boolean",
-                        "description": "true = 闹钟设完后不触发下一次唤醒，只等到点响；同条其它工具仍按各自规则。"
+                        "description": "默认 false；true = 设完闹钟后继续下一拍。"
                     }
                 },
                 "required": [
@@ -695,7 +695,7 @@
         "type": "function",
         "function": {
             "name": "line",
-            "description": "说出台词。默认这一句之后还要下一次唤醒；final=true 时这一句本身不需要下一次唤醒，但同条其它需要唤醒的工具仍会继续。",
+            "description": "说出台词。默认这一句之后不唤醒；要接着说话或做事，带 wake=true。同条其它需要唤醒的工具仍会继续。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -703,9 +703,9 @@
                         "type": "string",
                         "description": "她说出口的话。"
                     },
-                    "final": {
+                    "wake": {
                         "type": "boolean",
-                        "description": "true = 这一句本身不需要下一次唤醒；同条若还有其它需要唤醒的工具（map/plan/long 等），仍会继续。"
+                        "description": "默认 false；true = 这句之后继续下一拍，可以再说/做别的事。"
                     }
                 },
                 "required": [
