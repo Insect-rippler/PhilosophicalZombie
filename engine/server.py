@@ -538,10 +538,13 @@ def session_history(limit=40, with_total=False):
         if role == "tool":
             continue
         if role == "assistant" and item.get("tool_calls"):
-            names = {(c.get("function") or {}).get("name") for c in item["tool_calls"]}
-            if "phone" in names:
+            visible_calls = [
+                call for call in item["tool_calls"]
+                if (call.get("function") or {}).get("name") != "phone"
+            ]
+            if not visible_calls:
                 continue
-            for call in item["tool_calls"]:
+            for call in visible_calls:
                 name = (call.get("function") or {}).get("name") or ""
                 if name == "active":
                     try:
