@@ -46,6 +46,24 @@ conda run -n f5 pip install --index-url https://mirrors.huaweicloud.com/reposito
 conda run -n f5 python model/f5_server.py     # 监听 127.0.0.1:9880
 ```
 
+服务接口：
+
+```text
+GET  /health   → {"ok": true, "model": "F5TTS_v1_Base"}
+POST /tts      → audio/wav 字节流
+```
+
+常用环境变量：
+
+| 变量 | 作用 |
+|---|---|
+| `F5_CKPT` | 权重 `.safetensors` |
+| `F5_VOCAB` | `vocab.txt` |
+| `F5_VOCODER` | 声码器目录 |
+| `F5_REF` | 默认参考音频 |
+| `F5_REF_TEXT` | 默认参考文本 |
+| `F5_PORT` | 监听端口，默认 9880 |
+
 两个已知坑，代码里已经处理：
 
 - `torchaudio.load()` 在 2.11 强制走 torchcodec，而 torchcodec 的 FFmpeg DLL 常加载失败。
